@@ -1,0 +1,21 @@
+venv/
+/venv
+.venv/
+
+# Python bytecode
+*.pid
+__pycache__/
+*.pyc
+
+# IDE files
+.idea/
+.vscode/
+.history/
+
+# Environment variables
+
+.env.local
+
+# Logs
+logs/
+*.log

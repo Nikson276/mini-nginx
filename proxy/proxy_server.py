@@ -4,6 +4,7 @@ import asyncio
 from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.client_handler import ClientConnectionHandler
+from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
 
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,10 @@ logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 # For now, we proxy to a single upstream server
 UPSTREAM_HOST = '127.0.0.1'
 UPSTREAM_PORT = 9001
+
+# Timeout policy (can be loaded from config later)
+# Default values: connect=1s, read=15s, write=15s, total=30s
+TIMEOUT_POLICY = DEFAULT_TIMEOUT_POLICY
 
 
 async def client_connected(reader: StreamReader, writer: StreamWriter):
@@ -28,7 +33,9 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
     4. Forward response from upstream to client (stream)
     5. Close connections properly
     """
-    handler = ClientConnectionHandler(reader, writer)
+    # Create handler with timeout policy
+    # This ensures all operations (connect, read, write) have timeouts
+    handler = ClientConnectionHandler(reader, writer, timeout_policy=TIMEOUT_POLICY)
     address = handler.address
     logger.info('Client connected: %s', address)
 

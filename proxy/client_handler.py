@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.utils.http import HTTPRequest
+from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
 
 
 logger = logging.getLogger(__name__)
@@ -14,10 +15,17 @@ logger = logging.getLogger(__name__)
 class ClientConnectionHandler:
     """Handles client connections and parses HTTP requests."""
     
-    def __init__(self, reader: StreamReader, writer: StreamWriter):
+    def __init__(
+        self,
+        reader: StreamReader,
+        writer: StreamWriter,
+        timeout_policy: Optional[TimeoutPolicy] = None,
+    ):
         self.reader = reader
         self.writer = writer
         self.address = writer.get_extra_info('peername')
+        # Use provided timeout policy or default
+        self.timeout_policy = timeout_policy or DEFAULT_TIMEOUT_POLICY
     
     async def proxy_to_upstream(
         self,
@@ -51,20 +59,47 @@ class ClientConnectionHandler:
                 request.path
             )
             
-            # 1. Connect to upstream server
+            # 1. Connect to upstream server with CONNECT timeout
             # asyncio.open_connection creates a TCP connection and returns
             # StreamReader/StreamWriter pair for bidirectional communication
-            upstream_reader, upstream_writer = await asyncio.open_connection(
-                upstream_host,
-                upstream_port
-            )
+            # If upstream is unreachable or slow, we don't want to wait forever
+            try:
+                upstream_reader, upstream_writer = await self.timeout_policy.with_connect_timeout(
+                    asyncio.open_connection(upstream_host, upstream_port)
+                )
+            except asyncio.TimeoutError:
+                # Connect timeout - upstream не отвечает на подключение в течение 1 секунды
+                logger.error(
+                    'Connection to upstream %s:%d timed out after %dms (upstream may be down or unreachable)',
+                    upstream_host,
+                    upstream_port,
+                    self.timeout_policy.connect_ms
+                )
+                raise
+            except (ConnectionRefusedError, OSError, ConnectionError) as e:
+                # Upstream is not available (connection refused, network unreachable, etc.)
+                # Это происходит когда upstream выключен или порт закрыт
+                # Пробрасываем ошибку наверх - там она будет обработана и залогирована
+                raise
             
             logger.info('Connected to upstream %s:%d', upstream_host, upstream_port)
             
-            # 2. Send request to upstream
+            # 2. Send request to upstream with WRITE timeout
             # This writes: start line + headers + empty line + body (streamed)
+            # If upstream is slow to accept data, we timeout
             logger.debug('Sending request to upstream: %s %s', request.method, request.path)
-            await request.write_to_upstream(upstream_writer)
+            try:
+                await self.timeout_policy.with_write_timeout(
+                    request.write_to_upstream(upstream_writer)
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    'Write to upstream %s:%d timed out after %dms',
+                    upstream_host,
+                    upstream_port,
+                    self.timeout_policy.write_ms
+                )
+                raise
             logger.debug('Request sent to upstream, waiting for response...')
             
             # 3. Stream response from upstream to client
@@ -81,16 +116,27 @@ class ClientConnectionHandler:
             
             # Read response in chunks and immediately forward to client
             # This creates streaming: upstream->proxy->client
+            # Each read operation has READ timeout to prevent hanging
             first_chunk = True
             
             # Read until upstream closes connection (EOF)
             # For HTTP/1.1 with Connection: close, upstream should close after response
             try:
                 while True:
-                    # Read chunk from upstream
-                    # read() will return empty bytes (b'') when upstream closes connection
-                    # or when at_eof() is True
-                    chunk = await upstream_reader.read(chunk_size)
+                    # Read chunk from upstream with READ timeout
+                    # If upstream is slow to send data, we timeout
+                    try:
+                        chunk = await self.timeout_policy.with_read_timeout(
+                            upstream_reader.read(chunk_size)
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            'Read from upstream %s:%d timed out after %dms',
+                            upstream_host,
+                            upstream_port,
+                            self.timeout_policy.read_ms
+                        )
+                        raise
                     
                     if not chunk:  # No data received
                         # Check if connection is closed
@@ -111,11 +157,16 @@ class ClientConnectionHandler:
                     total_bytes += len(chunk)
                     
                     # Write chunk to client immediately
+                    # Note: We don't timeout client writes - if client is slow,
+                    # drain() will naturally handle backpressure
                     self.writer.write(chunk)
                     # drain() ensures backpressure: if client's receive buffer is full,
                     # we wait here instead of buffering everything in memory
                     # This prevents memory exhaustion on large responses
                     await self.writer.drain()
+            except asyncio.TimeoutError:
+                # Re-raise timeout errors (already logged above)
+                raise
             except Exception as e:
                 logger.error('Error reading response from upstream: %s', e, exc_info=True)
                 raise
@@ -131,6 +182,47 @@ class ClientConnectionHandler:
                 upstream_port,
                 total_bytes
             )
+        
+        except asyncio.TimeoutError:
+            # Timeout errors are already logged in specific places
+            # Send timeout error response to client
+            try:
+                error_response = (
+                    f"{request.version} 504 Gateway Timeout\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "Upstream timeout"
+                )
+                self.writer.write(error_response.encode())
+                await self.writer.drain()
+            except Exception:
+                pass  # Client might have disconnected
+            raise
+        
+        except (ConnectionRefusedError, OSError, ConnectionError) as e:
+            # Upstream is not available (connection refused, network unreachable, etc.)
+            # This happens when upstream is down or port is closed
+            # This is different from timeout - upstream is simply not reachable
+            logger.error(
+                'Cannot connect to upstream %s:%d: %s (upstream is likely down)',
+                upstream_host,
+                upstream_port,
+                e
+            )
+            try:
+                error_response = (
+                    f"{request.version} 502 Bad Gateway\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    f"Upstream unavailable: {str(e)}"
+                )
+                self.writer.write(error_response.encode())
+                await self.writer.drain()
+            except Exception:
+                pass  # Client might have disconnected
+            raise
         
         except asyncio.CancelledError:
             logger.warning('Proxy task cancelled for %s %s', request.method, request.path)

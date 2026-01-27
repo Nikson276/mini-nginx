@@ -5,6 +5,7 @@ from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.client_handler import ClientConnectionHandler
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
+from proxy.upstream_pool import UpstreamPool, Upstream, DEFAULT_UPSTREAM_POOL
 
 
 logger = logging.getLogger(__name__)
@@ -12,10 +13,13 @@ logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 
 
-# Simple upstream configuration (will be moved to config.py later)
-# For now, we proxy to a single upstream server
-UPSTREAM_HOST = '127.0.0.1'
-UPSTREAM_PORT = 9001
+# Upstream pool with round-robin load balancing
+# Можно настроить несколько upstream серверов для балансировки нагрузки
+# По умолчанию используется один upstream, но можно добавить больше:
+UPSTREAM_POOL = UpstreamPool([
+    Upstream(host='127.0.0.1', port=9001),
+    Upstream(host='127.0.0.1', port=9002),
+])
 
 # Timeout policy (can be loaded from config later)
 # Default values: connect=1s, read=15s, write=15s, total=30s
@@ -56,7 +60,20 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
         )
         logger.debug('Headers: %s', request.headers)
         
-        # 2. Proxy request to upstream
+        # 2. Select upstream using round-robin load balancing
+        # Round-robin распределяет запросы равномерно по всем upstream серверам
+        # Первый запрос → первый upstream, второй запрос → второй upstream,
+        # третий запрос → снова первый upstream, и так далее по кругу
+        upstream = await UPSTREAM_POOL.get_next()
+        logger.info(
+            'Selected upstream %s:%d for %s %s (round-robin)',
+            upstream.host,
+            upstream.port,
+            request.method,
+            request.path
+        )
+        
+        # 3. Proxy request to selected upstream
         # This handles:
         # - Connection to upstream
         # - Sending request (headers + body streaming)
@@ -64,8 +81,7 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
         # - Backpressure handling via drain()
         await handler.proxy_to_upstream(
             request,
-            upstream_host=UPSTREAM_HOST,
-            upstream_port=UPSTREAM_PORT,
+            upstream=upstream,
         )
     
     except asyncio.CancelledError:
@@ -87,7 +103,12 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
 
 async def main(host: str, port: int):
     srv = await asyncio.start_server(
-        client_connected, host, port)
+        client_connected,
+        host,
+        port,
+        reuse_address=True,
+        reuse_port=True 
+    )
 
     async with srv:
         await srv.serve_forever()

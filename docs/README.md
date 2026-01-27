@@ -19,7 +19,8 @@ python3 -m proxy.main 127.0.0.1 8080
 - ✅ Проксирование к одному upstream с двунаправленным стримингом
 - ✅ Backpressure через `drain()` для предотвращения переполнения буферов
 - ✅ Таймауты на все операции (connect, read, write, total)
-- ⏳ Балансировка round-robin по нескольким upstream (в разработке)
+- ✅ Балансировка round-robin по нескольким upstream
+- ⏳ Лимиты на количество одновременных соединений (в разработке)
 
 ## Что реализовано
 
@@ -46,6 +47,93 @@ python3 -m proxy.main 127.0.0.1 8080
 ### Таймауты (Timeout Policy)
 
 Прокси-сервер использует систему таймаутов для защиты от зависших соединений и медленных upstream серверов. Все таймауты настраиваются через класс `TimeoutPolicy`:
+
+#### Конфигурация таймаутов
+
+Таймауты настраиваются через `TimeoutPolicy` в `proxy/proxy_server.py`:
+
+```python
+from proxy.timeouts import TimeoutPolicy
+
+# Кастомная политика таймаутов
+TIMEOUT_POLICY = TimeoutPolicy(
+    connect_ms=1000,   # 1 секунда на подключение
+    read_ms=15000,     # 15 секунд на чтение
+    write_ms=15000,    # 15 секунд на запись
+    total_ms=30000     # 30 секунд общий таймаут
+)
+```
+
+По умолчанию используются значения из `DEFAULT_TIMEOUT_POLICY`:
+- `connect_ms=1000` (1 секунда)
+- `read_ms=15000` (15 секунд)
+- `write_ms=15000` (15 секунд)
+- `total_ms=30000` (30 секунд)
+
+### Балансировка нагрузки (Round-Robin)
+
+Прокси-сервер поддерживает балансировку нагрузки по нескольким upstream серверам с использованием алгоритма **round-robin**.
+
+#### Как работает Round-Robin:
+
+Round-robin распределяет запросы равномерно по всем upstream серверам последовательно:
+- **Первый запрос** → первый upstream
+- **Второй запрос** → второй upstream  
+- **Третий запрос** → третий upstream
+- **Четвертый запрос** → снова первый upstream (циклический переход)
+
+Это простой и эффективный способ балансировки, который:
+- ✅ Равномерно распределяет нагрузку между всеми upstream
+- ✅ Не требует сложной логики выбора
+- ✅ Работает хорошо, когда все upstream имеют одинаковую производительность
+- ✅ Thread-safe (использует asyncio.Lock для защиты от race conditions)
+
+#### Пример работы:
+
+```python
+# Пусть у нас есть 2 upstream сервера:
+pool = UpstreamPool([
+    Upstream(host='127.0.0.1', port=9001),
+    Upstream(host='127.0.0.1', port=9002),
+])
+
+# Запрос 1 → upstream 9001
+upstream = pool.get_next()  # Upstream(host='127.0.0.1', port=9001)
+
+# Запрос 2 → upstream 9002
+upstream = pool.get_next()  # Upstream(host='127.0.0.1', port=9002)
+
+# Запрос 3 → upstream 9001 (снова первый)
+upstream = pool.get_next()  # Upstream(host='127.0.0.1', port=9001)
+```
+
+#### Конфигурация upstream pool
+
+Настройка upstream серверов в `proxy/proxy_server.py`:
+
+```python
+from proxy.upstream_pool import UpstreamPool, Upstream
+
+# Создаем pool с несколькими upstream серверами
+UPSTREAM_POOL = UpstreamPool([
+    Upstream(host='127.0.0.1', port=9001),
+    Upstream(host='127.0.0.1', port=9002),
+    # Можно добавить больше upstream серверов
+    # Upstream(host='127.0.0.1', port=9003),
+])
+```
+#### Что изменилось после добавления балансировки:
+
+**До:**
+- Все запросы шли на один upstream сервер
+- Не было распределения нагрузки
+- При падении upstream все запросы падали
+
+**После:**
+- ✅ Запросы распределяются равномерно между всеми upstream
+- ✅ Можно добавить несколько upstream для повышения надежности
+- ✅ При падении одного upstream, другие продолжают работать (хотя сейчас нет автоматического исключения недоступных upstream - это можно добавить позже)
+- ✅ Простое добавление новых upstream серверов через конфигурацию
 
 #### Типы таймаутов:
 
@@ -155,6 +243,8 @@ custom_timeouts = TimeoutPolicy(
 # В одном терминале запустить upstream
 cd tests
 uvicorn echo_app:app --host 127.0.0.1 --port 9001 --workers 1
+# Второй
+uvicorn echo_app:app --host 127.0.0.1 --port 9002 --workers 1
 
 # Или  простой HTTP сервер
 python3 -m http.server 9001
@@ -188,7 +278,61 @@ head -c 100000 /dev/urandom | base64 | curl -v -X POST http://127.0.0.1:8080/ech
 echo "test data" | head -c 10000 | curl -v -X POST http://127.0.0.1:8080/echo --data-binary @-
 ```
 
-#### Ошибки и фиксы
+### Протестировать таймауты 
+
+Выключим сервер апстрима на uvicorn и отправим запрос прокси, он должен вернуть 502 Bad Gateway из-за невозможности установить соединение.
+
+```bash
+  $ curl -v http://127.0.0.1:8080/
+  *   Trying 127.0.0.1:8080...
+  * Established connection to 127.0.0.1 (127.0.0.1 port 8080) from 127.0.0.1 port 39742 
+  * using HTTP/1.x
+  > GET / HTTP/1.1
+  > Host: 127.0.0.1:8080
+  > User-Agent: curl/8.18.0
+  > Accept: */*
+  > 
+  * Request completely sent off
+  < HTTP/1.1 502 Bad Gateway
+  < Content-Type: text/plain
+  < Connection: close
+  < 
+  * shutting down connection #0
+  Upstream unavailable: [Errno 111] Connect call failed ('127.0.0.1', 9001)
+```
+
+### Тестирование балансировки
+
+Для тестирования балансировки запустите несколько upstream серверов:
+
+```bash
+# Терминал 1: Первый upstream на порту 9001
+cd tests
+uvicorn echo_app:app --host 127.0.0.1 --port 9001
+
+# Терминал 2: Второй upstream на порту 9002  
+cd tests
+uvicorn echo_app:app --host 127.0.0.1 --port 9002
+
+# Терминал 3: Прокси сервер
+python3 -m proxy.main
+
+# Терминал 4: Тестирование
+# Делайте несколько запросов и смотрите в логах прокси,
+# какой upstream был выбран для каждого запроса
+curl http://127.0.0.1:8080/
+curl http://127.0.0.1:8080/
+curl http://127.0.0.1:8080/
+```
+
+В логах прокси вы увидите:
+```
+Selected upstream 127.0.0.1:9001 for GET / (round-robin)
+Selected upstream 127.0.0.1:9002 for GET / (round-robin)
+Selected upstream 127.0.0.1:9001 for GET / (round-robin)
+```
+
+## Ошибки и фиксы
 
 - При отправке запроса на прокси, в ответ получал зависание сессии и текст: 
 `* Request completely sent off`
@@ -199,7 +343,7 @@ echo "test data" | head -c 10000 | curl -v -X POST http://127.0.0.1:8080/echo --
 > Для GET-запросов без тела не нужно читать тело до EOF.
 > Чтение ответа от upstream до EOF может зависнуть при keep-alive.
 
-##### Исправления:
+### Исправления:
 
 1. Обработка тела запроса (utils/http.py):
 - Проверка наличия тела по Content-Length или Transfer-Encoding
@@ -214,166 +358,3 @@ echo "test data" | head -c 10000 | curl -v -X POST http://127.0.0.1:8080/echo --
 - Добавлена проверка at_eof() для определения закрытия соединения
 - Улучшено логирование для отладки
 - Обработка случая, когда данных нет, но соединение еще открыто
-
-#### Результаты
-
-##### GET запрос
-
-```bash
-*   Trying 127.0.0.1:8080...
-* Established connection to 127.0.0.1 (127.0.0.1 port 8080) from 127.0.0.1 port 33496 
-* using HTTP/1.x
-> GET / HTTP/1.1
-> Host: 127.0.0.1:8080
-> User-Agent: curl/8.18.0
-> Accept: */*
-> 
-* Request completely sent off
-< HTTP/1.1 200 OK
-< date: Wed, 21 Jan 2026 23:36:43 GMT
-< server: uvicorn
-< content-length: 204
-< content-type: application/json
-< connection: close
-< 
-{
-  "method": "GET",
-  "path": "/",
-  "headers": {
-    "host": "127.0.0.1:8080",
-    "user-agent": "curl/8.18.0",
-    "accept": "*/*",
-    "connection": "close"
-  },
-  "body": null,
-  "query_params": {}
-* shutting down connection #0
-```
-
-##### POST запрос
-
-```bash
-*   Trying 127.0.0.1:8080...
-* Established connection to 127.0.0.1 (127.0.0.1 port 8080) from 127.0.0.1 port 54302 
-* using HTTP/1.x
-> POST /test HTTP/1.1
-> Host: 127.0.0.1:8080
-> User-Agent: curl/8.18.0
-> Accept: */*
-> Content-Type: text/plain
-> Content-Length: 11
-> 
-* upload completely sent off: 11 bytes
-< HTTP/1.1 200 OK
-< date: Wed, 21 Jan 2026 23:43:26 GMT
-< server: uvicorn
-< content-length: 280
-< content-type: application/json
-< connection: close
-< 
-{
-  "method": "POST",
-  "path": "/test",
-  "headers": {
-    "host": "127.0.0.1:8080",
-    "user-agent": "curl/8.18.0",
-    "accept": "*/*",
-    "content-type": "text/plain",
-    "content-length": "11",
-    "connection": "close"
-  },
-  "body": "hello world",
-  "query_params": {}
-* shutting down connection #0
-```
-
-##### POST with file
-
-```bash
-*   Trying 127.0.0.1:8080...
-* Established connection to 127.0.0.1 (127.0.0.1 port 8080) from 127.0.0.1 port 47826 
-* using HTTP/1.x
-> POST /echo HTTP/1.1
-> Host: 127.0.0.1:8080
-> User-Agent: curl/8.18.0
-> Accept: */*
-> Content-Length: 10
-> Content-Type: application/x-www-form-urlencoded
-> 
-* upload completely sent off: 10 bytes
-< HTTP/1.1 200 OK
-< date: Wed, 21 Jan 2026 23:46:58 GMT
-< server: uvicorn
-< content-length: 303
-< content-type: application/json
-< connection: close
-< 
-{
-  "method": "POST",
-  "path": "/echo",
-  "headers": {
-    "host": "127.0.0.1:8080",
-    "user-agent": "curl/8.18.0",
-    "accept": "*/*",
-    "content-length": "10",
-    "content-type": "application/x-www-form-urlencoded",
-    "connection": "close"
-  },
-  "body": "test data\n",
-  "query_params": {}
-* shutting down connection #0
-```
-### Протестировать таймауты 
-
-Выключим сервер апстрима на uvicorn и отправим запрос прокси, он должен вернуть 502 Bad Gateway из-за невозможности установить соединение.
-
-```bash
-$ curl -v http://127.0.0.1:8080/
-*   Trying 127.0.0.1:8080...
-* Established connection to 127.0.0.1 (127.0.0.1 port 8080) from 127.0.0.1 port 39742 
-* using HTTP/1.x
-> GET / HTTP/1.1
-> Host: 127.0.0.1:8080
-> User-Agent: curl/8.18.0
-> Accept: */*
-> 
-* Request completely sent off
-< HTTP/1.1 502 Bad Gateway
-< Content-Type: text/plain
-< Connection: close
-< 
-* shutting down connection #0
-Upstream unavailable: [Errno 111] Connect call failed ('127.0.0.1', 9001)
-```
-
-### Конфигурация upstream
-
-По умолчанию прокси направляет запросы на `127.0.0.1:9001`. 
-Чтобы изменить, отредактируйте константы в `proxy/proxy_server.py`:
-
-```python
-UPSTREAM_HOST = '127.0.0.1'
-UPSTREAM_PORT = 9001
-```
-
-### Конфигурация таймаутов
-
-Таймауты настраиваются через `TimeoutPolicy` в `proxy/proxy_server.py`:
-
-```python
-from proxy.timeouts import TimeoutPolicy
-
-# Кастомная политика таймаутов
-TIMEOUT_POLICY = TimeoutPolicy(
-    connect_ms=1000,   # 1 секунда на подключение
-    read_ms=15000,     # 15 секунд на чтение
-    write_ms=15000,    # 15 секунд на запись
-    total_ms=30000     # 30 секунд общий таймаут
-)
-```
-
-По умолчанию используются значения из `DEFAULT_TIMEOUT_POLICY`:
-- `connect_ms=1000` (1 секунда)
-- `read_ms=15000` (15 секунд)
-- `write_ms=15000` (15 секунд)
-- `total_ms=30000` (30 секунд)

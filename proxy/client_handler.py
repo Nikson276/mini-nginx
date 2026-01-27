@@ -30,8 +30,7 @@ class ClientConnectionHandler:
     async def proxy_to_upstream(
         self,
         request: HTTPRequest,
-        upstream_host: str,
-        upstream_port: int,
+        upstream,  # Upstream object from upstream_pool
     ) -> None:
         """
         Proxy HTTP request to upstream server with bidirectional streaming.
@@ -44,11 +43,39 @@ class ClientConnectionHandler:
         
         Args:
             request: Parsed HTTP request from client
-            upstream_host: Upstream server hostname/IP
-            upstream_port: Upstream server port
+            upstream: Upstream object (from upstream_pool.UpstreamPool)
+        """
+        # Import here to avoid circular dependency
+        from proxy.upstream_pool import Upstream
+        
+        if not isinstance(upstream, Upstream):
+            raise TypeError(f"Expected Upstream object, got {type(upstream)}")
+        
+        # Extract host and port from Upstream object
+        upstream_host = upstream.host
+        upstream_port = upstream.port
+        
+        # Wrap entire proxy operation in total timeout
+        # This ensures no request takes longer than total_ms
+        await self.timeout_policy.with_total_timeout(
+            self._proxy_to_upstream_internal(request, upstream)
+        )
+    
+    async def _proxy_to_upstream_internal(
+        self,
+        request: HTTPRequest,
+        upstream,  # Upstream object
+    ) -> None:
+        """
+        Internal method that does the actual proxying.
+        Called from proxy_to_upstream which wraps it in total timeout.
         """
         upstream_reader = None
         upstream_writer = None
+        
+        # Extract host and port from Upstream object
+        upstream_host = upstream.host
+        upstream_port = upstream.port
         
         try:
             logger.info(

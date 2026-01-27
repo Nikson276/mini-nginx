@@ -1,4 +1,4 @@
-# Мини‑Nginx на asyncio (reverse proxy)
+# Спецификация Мини‑Nginx на asyncio (reverse proxy)
 
 ## Запуск сервера
 

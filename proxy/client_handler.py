@@ -20,12 +20,15 @@ class ClientConnectionHandler:
         reader: StreamReader,
         writer: StreamWriter,
         timeout_policy: Optional[TimeoutPolicy] = None,
+        limit_manager=None,  # ConnectionLimitManager, optional
     ):
         self.reader = reader
         self.writer = writer
         self.address = writer.get_extra_info('peername')
         # Use provided timeout policy or default
         self.timeout_policy = timeout_policy or DEFAULT_TIMEOUT_POLICY
+        # Connection limit manager (optional)
+        self.limit_manager = limit_manager
     
     async def proxy_to_upstream(
         self,
@@ -86,14 +89,31 @@ class ClientConnectionHandler:
                 request.path
             )
             
-            # 1. Connect to upstream server with CONNECT timeout
-            # asyncio.open_connection creates a TCP connection and returns
-            # StreamReader/StreamWriter pair for bidirectional communication
-            # If upstream is unreachable or slow, we don't want to wait forever
+            # 1. Connect to upstream server with CONNECT timeout and connection limit
+            # Ограничение количества соединений к upstream через Semaphore
+            # Если достигнут лимит max_conns_per_upstream, корутина будет ждать
+            # Это защищает upstream от перегрузки
+            
+            # Получаем семафор для этого upstream (если лимиты включены)
+            upstream_semaphore = None
+            if self.limit_manager:
+                upstream_semaphore = await self.limit_manager.upstream_connection(upstream)
+            
+            # Подключаемся к upstream с учетом лимита соединений
+            # async with автоматически вызывает acquire() при входе и release() при выходе
+            # Если лимит достигнут, корутина будет ждать здесь, пока не освободится место
             try:
-                upstream_reader, upstream_writer = await self.timeout_policy.with_connect_timeout(
-                    asyncio.open_connection(upstream_host, upstream_port)
-                )
+                if upstream_semaphore:
+                    # Используем семафор для ограничения соединений
+                    async with upstream_semaphore:
+                        upstream_reader, upstream_writer = await self.timeout_policy.with_connect_timeout(
+                            asyncio.open_connection(upstream_host, upstream_port)
+                        )
+                else:
+                    # Лимиты не включены, подключаемся без ограничений
+                    upstream_reader, upstream_writer = await self.timeout_policy.with_connect_timeout(
+                        asyncio.open_connection(upstream_host, upstream_port)
+                    )
             except asyncio.TimeoutError:
                 # Connect timeout - upstream не отвечает на подключение в течение 1 секунды
                 logger.error(

@@ -1,0 +1,16 @@
+# Mini-nginx proxy server
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY proxy/ proxy/
+# So that "python -m proxy.main" works
+ENV PYTHONPATH=/app
+
+EXPOSE 8080
+
+# Listen on all interfaces so host and Docker network (e.g. k6) can connect
+ENV PROXY_LISTEN_HOST=0.0.0.0
+ENV PROXY_LISTEN_PORT=8080
+
+CMD ["python", "-m", "proxy.main"]

@@ -1,0 +1,63 @@
+# Mini-nginx: proxy + upstreams (+ k6 later)
+# Start: docker compose up -d
+# Stop:  docker compose down
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    container_name: mini-nginx-proxy
+    ports:
+      - "8080:8080"
+    environment:
+      PROXY_LISTEN_HOST: "0.0.0.0"
+      PROXY_LISTEN_PORT: "8080"
+      # Upstreams by Docker service names (reachable inside network)
+      UPSTREAM_HOSTS: "upstream1:9001,upstream2:9002"
+    depends_on:
+      - upstream1
+      - upstream2
+    networks:
+      - app
+
+  upstream1:
+    build:
+      context: .
+      dockerfile: Dockerfile.upstream
+    container_name: mini-nginx-upstream1
+    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9001"]
+    expose:
+      - "9001"
+    networks:
+      - app
+
+  upstream2:
+    build:
+      context: .
+      dockerfile: Dockerfile.upstream
+    container_name: mini-nginx-upstream2
+    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9002"]
+    expose:
+      - "9002"
+    networks:
+      - app
+
+  # Placeholder for k6 load tests (add Dockerfile.k6 / script later)
+  # k6:
+  #   image: grafana/k6:latest
+  #   container_name: mini-nginx-k6
+  #   command: ["run", "/scripts/load.js"]
+  #   volumes:
+  #     - ./tests/k6:/scripts
+  #   depends_on:
+  #     - proxy
+  #   environment:
+  #     K6_VUS: 10
+  #     TARGET_URL: http://proxy:8080
+  #   networks:
+  #     - app
+
+networks:
+  app:
+    driver: bridge

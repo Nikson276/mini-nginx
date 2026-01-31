@@ -9,7 +9,6 @@
 * Usefull notes
 
   * [01 Timeouts explanation](./timeouts_explanation.md)
-  * [02 Timeouts example](./timeout_example.py)
 
 * Tests
 

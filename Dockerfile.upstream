@@ -1,0 +1,17 @@
+# Echo upstream for testing (FastAPI + uvicorn)
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Echo app (only what's needed for uvicorn tests.echo_app)
+COPY tests/echo_app.py tests/__init__.py tests/
+
+ENV PYTHONPATH=/app
+
+EXPOSE 9000
+
+# Port set via CMD/docker-compose
+CMD ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9000"]

@@ -1,11 +1,12 @@
 import logging
+import os
 import sys
 import asyncio
 from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.client_handler import ClientConnectionHandler
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
-from proxy.upstream_pool import UpstreamPool, Upstream, DEFAULT_UPSTREAM_POOL
+from proxy.upstream_pool import UpstreamPool, Upstream
 from proxy.limits import ConnectionLimitManager, ConnectionLimits, DEFAULT_LIMITS
 
 
@@ -14,13 +15,37 @@ logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 
 
+def _build_upstream_pool():
+    """
+    Build upstream pool from environment or use defaults.
+    
+    Env: UPSTREAM_HOSTS = "host1:port1,host2:port2,..."
+    Example: UPSTREAM_HOSTS=upstream1:9001,upstream2:9002 (for Docker Compose)
+    """
+    hosts_str = os.environ.get('UPSTREAM_HOSTS', '').strip()
+    if hosts_str:
+        upstreams = []
+        for part in hosts_str.split(','):
+            part = part.strip()
+            if ':' in part:
+                host, port_str = part.rsplit(':', 1)
+                try:
+                    port = int(port_str)
+                    upstreams.append(Upstream(host=host.strip(), port=port))
+                except ValueError:
+                    logger.warning('Invalid upstream entry %r, skip', part)
+        if upstreams:
+            return UpstreamPool(upstreams)
+    # Defaults (localhost, for local dev)
+    return UpstreamPool([
+        Upstream(host='127.0.0.1', port=9001),
+        Upstream(host='127.0.0.1', port=9002),
+    ])
+
+
 # Upstream pool with round-robin load balancing
-# Можно настроить несколько upstream серверов для балансировки нагрузки
-# По умолчанию используется один upstream, но можно добавить больше:
-UPSTREAM_POOL = UpstreamPool([
-    Upstream(host='127.0.0.1', port=9001),
-    Upstream(host='127.0.0.1', port=9002),
-])
+# Configurable via UPSTREAM_HOSTS env (e.g. Docker: upstream1:9001,upstream2:9002)
+UPSTREAM_POOL = _build_upstream_pool()
 
 # Timeout policy (can be loaded from config later)
 # Default values: connect=1s, read=15s, write=15s, total=30s

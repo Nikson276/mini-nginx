@@ -1,5 +1,6 @@
 """Main entry point for the mini-nginx proxy server."""
 
+import pyroscope
 import asyncio
 import logging
 import os
@@ -7,6 +8,23 @@ import sys
 
 from proxy.proxy_server import main as run_server
 
+
+def init_pyroscope():
+    """Простая инициализация Pyroscope"""
+    try:
+        app_name = os.getenv("PYROSCOPE_APPLICATION_NAME", "proxy-service")
+        server = os.getenv("PYROSCOPE_SERVER", "http://pyroscope:4040")
+        
+        print(f"Initializing Pyroscope: app={app_name}, server={server}")
+        
+        pyroscope.configure(
+            application_name=app_name,
+            server_address=server,
+        )
+        
+        print("Pyroscope initialized successfully!")
+    except Exception as e:
+        print(f"Pyroscope init error: {e}")
 
 def setup_logging():
     """Configure logging for the application."""
@@ -19,6 +37,7 @@ def setup_logging():
 
 if __name__ == '__main__':
     setup_logging()
+    init_pyroscope()
     
     # Default: localhost for local dev; in Docker set PROXY_LISTEN_HOST=0.0.0.0
     host = os.environ.get('PROXY_LISTEN_HOST', '127.0.0.1')

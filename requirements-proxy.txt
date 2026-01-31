@@ -1,2 +1,1 @@
-# Proxy has no external deps (uses stdlib asyncio).
-# Keep file for future optional deps.
+pyroscope-io>=0.8.0

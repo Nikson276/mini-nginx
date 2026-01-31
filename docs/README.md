@@ -13,8 +13,14 @@ docker compose up -d
 # Просмотр логов
 docker compose logs -f proxy
 
-# Остановка
-docker compose down
+# остановить и удалить данные
+docker compose down -v        
+
+# смотреть метрики контейнеров
+docker compose stats          
+
+# Запуск нагрузочного теста К6 в отдельном контейнере
+docker compose run --rm k6
 ```
 
 Проверка с хоста: `curl http://127.0.0.1:8080/`  

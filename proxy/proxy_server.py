@@ -2,12 +2,15 @@ import logging
 import os
 import sys
 import asyncio
+import uuid
 from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.client_handler import ClientConnectionHandler
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
 from proxy.upstream_pool import UpstreamPool, Upstream
 from proxy.limits import ConnectionLimitManager, ConnectionLimits, DEFAULT_LIMITS
+from proxy.logger import trace_id_ctx
+from proxy import metrics
 
 
 logger = logging.getLogger(__name__)
@@ -73,20 +76,19 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
     7. Release client connection slot
     """
     address = writer.get_extra_info('peername')
-    
+    trace_id = str(uuid.uuid4())
+    token = trace_id_ctx.set(trace_id)
+
     # Ограничение количества одновременных клиентских соединений
-    # Если достигнут лимит max_client_conns, новые клиенты будут ждать
-    # Это защищает прокси от перегрузки при большом количестве запросов
     async with CONNECTION_LIMITS.client_connection():
         logger.info('Client connected: %s', address)
-        
-        # Create handler with timeout policy
-        # This ensures all operations (connect, read, write) have timeouts
+
         handler = ClientConnectionHandler(
             reader,
             writer,
             timeout_policy=TIMEOUT_POLICY,
             limit_manager=CONNECTION_LIMITS,
+            trace_id=trace_id,
         )
 
         try:
@@ -94,15 +96,17 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
             request = await handler.parse_request()
             
             if not request:
+                await metrics.record_parse_error()
                 logger.warning('Failed to parse request from %s', address)
                 return
-            
+
+            start_time = await metrics.record_request_start()
             logger.info(
                 'Request: %s %s %s from %s',
                 request.method,
                 request.path,
                 request.version,
-                address
+                address,
             )
             logger.debug('Headers: %s', request.headers)
             
@@ -120,27 +124,26 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
             )
             
             # 3. Proxy request to selected upstream
-            # This handles:
-            # - Connection to upstream (with upstream connection limit)
-            # - Sending request (headers + body streaming)
-            # - Receiving response and forwarding to client (streaming)
-            # - Backpressure handling via drain()
-            await handler.proxy_to_upstream(
+            result = await handler.proxy_to_upstream(
                 request,
                 upstream=upstream,
             )
-        
+            if result is not None:
+                status, bytes_sent = result
+                await metrics.record_request_done(
+                    start_time, status, upstream.host, upstream.port, bytes_sent
+                )
+
         except asyncio.CancelledError:
             logger.warning('Client connection cancelled: %s', address)
             raise
-        
+
         except Exception as e:
             logger.error('Error handling client %s: %s', address, e, exc_info=True)
-        
+
         finally:
-            # Clean up client connection
-            # Semaphore автоматически освободится при выходе из async with блока
             logger.info('Client disconnected: %s', address)
+            trace_id_ctx.reset(token)
             writer.close()
             try:
                 await writer.wait_closed()

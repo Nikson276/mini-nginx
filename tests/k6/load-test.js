@@ -4,13 +4,13 @@ import http from 'k6/http'
 
 export const options = {
   thresholds: {
-    http_reqs: ['count>=500']
+    http_reqs: ['count>=1500']
   },
   stages: [
-    { target: 50, duration: '1m' },
-    { target: 100, duration: '1m30s' },
-    { target: 50, duration: '30s' },
-    { target: 100, duration: '30s' },
+    { target: 150, duration: '1m' },
+    { target: 500, duration: '1m30s' },
+    { target: 600, duration: '30s' },
+    { target: 1000, duration: '30s' },
   ],
 }
 
@@ -19,14 +19,12 @@ export default function () {
   const event = {
     id: `event-${__VU}-${__ITER}`,
     user_id: `user-${__VU}`,
-    track_id: "Test-case-1",
-    ingest_time: new Date().toISOString(), // ← клиент устанавливает время
-    // store_time НЕ отправляется!
+    track_id: "Test-case-2",
   }; 
 
   // Post played track message
   response = http.post(
-    'http://proxy:8080/events/',  // ← ВАЖНО: внутри Docker — не 0.0.0.0!
+    'http://proxy:8080/events/',
     JSON.stringify(event),
     { headers: { 'Content-Type': 'application/json' } }
   )

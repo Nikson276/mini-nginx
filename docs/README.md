@@ -29,6 +29,7 @@ docker compose run --rm k6
 Переменные окружения для прокси в Docker:
 - `UPSTREAM_HOSTS` — список upstream (по умолчанию `upstream1:9001,upstream2:9002`)
 - `PROXY_LISTEN_HOST` / `PROXY_LISTEN_PORT` — хост/порт прокси (в контейнере уже 0.0.0.0:8080)
+- `METRICS_LISTEN_HOST` / `METRICS_LISTEN_PORT` — хост/порт для ручки `/metrics` (по умолчанию 127.0.0.1:8081)
 
 ### Локально (без Docker)
 
@@ -53,7 +54,8 @@ python3 -m proxy.main 127.0.0.1 8080
 - ✅ Лимиты на количество одновременных соединений через Semaphore
 - ✅ Добавил [unit tests pytest](../tests/README.md) по основным частям функционала
 - ✅ Переход в контейнеры Docker для упрощения поднятия и тестов
-- ⏳ Логи и метрики (в разработке) и ручка для их получения на отдельном порте
+- ✅ Добавил pyroscope для сбора метрик cpu по компонентам
+- ✅ Логирование с trace_id и метрики: ручка `/metrics` на отдельном порту (Prometheus-формат)
 
 ## Что реализовано
 
@@ -145,8 +147,8 @@ async def with_connect_timeout(self, coro):
     # Если больше 1 секунды → отменяет операцию, выбрасывает TimeoutError
 ```
 
-**Подробное объяснение:** см. [docs/timeouts_explanation.md](../docs/timeouts_explanation.md)  
-**Рабочий пример:** запустите `python3 docs/timeout_example.py`
+**Подробное объяснение:** см. [docs/timeouts_explanation.md](../docs/info/timeouts_explanation.md)  
+**Рабочий пример:** запустите `python3 docs/info/timeout_example.py`
 
 #### Настройка таймаутов:
 
@@ -360,6 +362,31 @@ CONNECTION_LIMITS = ConnectionLimitManager(custom_limits)
 - ✅ Защита upstream серверов от перегрузки
 - ✅ Автоматическое ожидание при достижении лимита (не блокирует event loop)
 - ✅ Автоматическое освобождение ресурсов при завершении соединения
+
+### Логирование и метрики
+
+Для каждого входящего запроса прокси генерирует **trace_id** (UUID) и прокидывает его по всему пути: в логах и в заголовке **X-Trace-ID** при запросе к upstream. По одному значению trace_id можно проследить путь запроса от клиента до upstream и обратно.
+
+- **Логи**: в каждой строке лога при наличии контекста добавляется суффикс ` trace_id=<uuid>`. Формат: `%(asctime)s - %(name)s - %(levelname)s - %(message)s trace_id=...`
+- **Метрики**: отдельный HTTP-сервер на порту **8081** (по умолчанию) отдаёт ручку **GET /metrics** в формате Prometheus (text/plain).
+
+Переменные окружения:
+- `METRICS_LISTEN_HOST` / `METRICS_LISTEN_PORT` — хост и порт для сервера метрик (по умолчанию 127.0.0.1:8081). В Docker можно задать `METRICS_LISTEN_HOST=0.0.0.0` и пробросить порт 8081.
+
+Пример запроса метрик:
+```bash
+curl http://127.0.0.1:8081/metrics
+```
+
+Собираемые метрики (счётчики и сумма длительности запросов):
+- `proxy_requests_total` — всего входящих запросов
+- `proxy_requests_parse_errors_total` — ошибок разбора запроса
+- `proxy_responses_total{status_class="2xx|3xx|4xx|5xx"}` — ответы по классу статуса
+- `proxy_request_duration_seconds_sum` / `proxy_request_duration_seconds_count` — сумма и количество длительностей запросов (среднее = sum/count)
+- `proxy_bytes_sent_total` — байт отправлено клиентам
+- `proxy_upstream_requests_total{upstream="host:port"}` — запросов к каждому upstream
+- `proxy_upstream_errors_total{upstream,type="timeout|connection_refused|other"}` — ошибок при обращении к upstream
+- `proxy_timeout_errors_total{type="connect|read|write|total"}` — таймауты по типу
 
 
 ## Тестирование

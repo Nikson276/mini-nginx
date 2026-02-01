@@ -7,6 +7,7 @@ from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.utils.http import HTTPRequest
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
+from proxy import metrics
 
 
 logger = logging.getLogger(__name__)
@@ -14,29 +15,30 @@ logger = logging.getLogger(__name__)
 
 class ClientConnectionHandler:
     """Handles client connections and parses HTTP requests."""
-    
+
     def __init__(
         self,
         reader: StreamReader,
         writer: StreamWriter,
         timeout_policy: Optional[TimeoutPolicy] = None,
         limit_manager=None,  # ConnectionLimitManager, optional
+        trace_id: Optional[str] = None,
     ):
         self.reader = reader
         self.writer = writer
         self.address = writer.get_extra_info('peername')
-        # Use provided timeout policy or default
         self.timeout_policy = timeout_policy or DEFAULT_TIMEOUT_POLICY
-        # Connection limit manager (optional)
         self.limit_manager = limit_manager
+        self.trace_id = trace_id or ''
     
     async def proxy_to_upstream(
         self,
         request: HTTPRequest,
         upstream,  # Upstream object from upstream_pool
-    ) -> None:
+    ) -> Optional[Tuple[int, int]]:
         """
         Proxy HTTP request to upstream server with bidirectional streaming.
+        Returns (status_code, bytes_sent) on success, or raises on error.
         
         This method:
         1. Connects to upstream server
@@ -60,15 +62,26 @@ class ClientConnectionHandler:
         
         # Wrap entire proxy operation in total timeout
         # This ensures no request takes longer than total_ms
-        await self.timeout_policy.with_total_timeout(
+        return await self.timeout_policy.with_total_timeout(
             self._proxy_to_upstream_internal(request, upstream)
         )
     
+    def _parse_status_from_chunk(self, chunk: bytes) -> int:
+        """Parse HTTP status code from first line of response chunk (e.g. HTTP/1.1 200 OK)."""
+        try:
+            first_line = chunk.split(b"\r\n")[0].decode("utf-8", errors="replace")
+            parts = first_line.split(None, 2)
+            if len(parts) >= 2:
+                return int(parts[1])
+        except (ValueError, IndexError):
+            pass
+        return 200
+
     async def _proxy_to_upstream_internal(
         self,
         request: HTTPRequest,
         upstream,  # Upstream object
-    ) -> None:
+    ) -> Tuple[int, int]:
         """
         Internal method that does the actual proxying.
         Called from proxy_to_upstream which wraps it in total timeout.
@@ -86,7 +99,7 @@ class ClientConnectionHandler:
                 upstream_host,
                 upstream_port,
                 request.method,
-                request.path
+                request.path,
             )
             
             # 1. Connect to upstream server with CONNECT timeout and connection limit
@@ -115,12 +128,13 @@ class ClientConnectionHandler:
                         asyncio.open_connection(upstream_host, upstream_port)
                     )
             except asyncio.TimeoutError:
-                # Connect timeout - upstream не отвечает на подключение в течение 1 секунды
+                await metrics.record_timeout_error("connect")
+                await metrics.record_upstream_error(upstream_host, upstream_port, "timeout")
                 logger.error(
-                    'Connection to upstream %s:%d timed out after %dms (upstream may be down or unreachable)',
+                    'Connection to upstream %s:%d timed out after %dms',
                     upstream_host,
                     upstream_port,
-                    self.timeout_policy.connect_ms
+                    self.timeout_policy.connect_ms,
                 )
                 raise
             except (ConnectionRefusedError, OSError, ConnectionError) as e:
@@ -141,10 +155,11 @@ class ClientConnectionHandler:
                 )
             except asyncio.TimeoutError:
                 logger.error(
-                    'Write to upstream %s:%d timed out after %dms',
+                    'Write to upstream %s:%d timed out after %dms trace_id=%s',
                     upstream_host,
                     upstream_port,
-                    self.timeout_policy.write_ms
+                    self.timeout_policy.write_ms,
+                    self.trace_id,
                 )
                 raise
             logger.debug('Request sent to upstream, waiting for response...')
@@ -160,10 +175,9 @@ class ClientConnectionHandler:
             
             chunk_size = 8192  # 8KB chunks
             total_bytes = 0
-            
+            response_status = 200  # default if no chunk
+
             # Read response in chunks and immediately forward to client
-            # This creates streaming: upstream->proxy->client
-            # Each read operation has READ timeout to prevent hanging
             first_chunk = True
             
             # Read until upstream closes connection (EOF)
@@ -181,8 +195,10 @@ class ClientConnectionHandler:
                             'Read from upstream %s:%d timed out after %dms',
                             upstream_host,
                             upstream_port,
-                            self.timeout_policy.read_ms
+                            self.timeout_policy.read_ms,
                         )
+                        await metrics.record_timeout_error("read")
+                        await metrics.record_upstream_error(upstream_host, upstream_port, "timeout")
                         raise
                     
                     if not chunk:  # No data received
@@ -197,10 +213,11 @@ class ClientConnectionHandler:
                         break
                     
                     if first_chunk:
-                        logger.debug('Received first chunk from upstream (%d bytes): %s', 
+                        response_status = self._parse_status_from_chunk(chunk)
+                        logger.debug('Received first chunk from upstream (%d bytes): %s',
                                    len(chunk), chunk[:100] if len(chunk) > 100 else chunk)
                         first_chunk = False
-                    
+
                     total_bytes += len(chunk)
                     
                     # Write chunk to client immediately
@@ -217,22 +234,24 @@ class ClientConnectionHandler:
             except Exception as e:
                 logger.error('Error reading response from upstream: %s', e, exc_info=True)
                 raise
-            
+
             # Ensure all data is sent to client
             await self.writer.drain()
             
             logger.info(
-                'Finished proxying %s %s to %s:%d (%d bytes)',
+                'Finished proxying %s %s to %s:%d (%d bytes)(%d response_status)',
                 request.method,
                 request.path,
                 upstream_host,
                 upstream_port,
-                total_bytes
+                total_bytes,
+                response_status
             )
-        
+            return (response_status, total_bytes)
+
         except asyncio.TimeoutError:
-            # Timeout errors are already logged in specific places
-            # Send timeout error response to client
+            await metrics.record_response_status(504)
+            await metrics.record_timeout_error("total")
             try:
                 error_response = (
                     f"{request.version} 504 Gateway Timeout\r\n"
@@ -244,18 +263,18 @@ class ClientConnectionHandler:
                 self.writer.write(error_response.encode())
                 await self.writer.drain()
             except Exception:
-                pass  # Client might have disconnected
+                pass
             raise
-        
+
         except (ConnectionRefusedError, OSError, ConnectionError) as e:
-            # Upstream is not available (connection refused, network unreachable, etc.)
-            # This happens when upstream is down or port is closed
-            # This is different from timeout - upstream is simply not reachable
+            await metrics.record_response_status(502)
+            err_type = "connection_refused" if isinstance(e, ConnectionRefusedError) else "other"
+            await metrics.record_upstream_error(upstream_host, upstream_port, err_type)
             logger.error(
-                'Cannot connect to upstream %s:%d: %s (upstream is likely down)',
+                'Cannot connect to upstream %s:%d: %s',
                 upstream_host,
                 upstream_port,
-                e
+                e,
             )
             try:
                 error_response = (
@@ -276,14 +295,15 @@ class ClientConnectionHandler:
             raise
         
         except Exception as e:
+            await metrics.record_response_status(502)
+            await metrics.record_upstream_error(upstream_host, upstream_port, "other")
             logger.error(
                 'Error proxying to %s:%d: %s',
                 upstream_host,
                 upstream_port,
                 e,
-                exc_info=True
+                exc_info=True,
             )
-            # Send error response to client if we haven't started streaming response
             try:
                 error_response = (
                     f"{request.version} 502 Bad Gateway\r\n"
@@ -340,7 +360,8 @@ class ClientConnectionHandler:
                 path=path,
                 version=version,
                 headers=headers,
-                reader=self.reader,  # Body will be read from this stream
+                reader=self.reader,
+                trace_id=self.trace_id,
             )
         
         except Exception as e:

@@ -1,6 +1,3 @@
-# Mini-nginx: proxy + upstreams (+ k6 later)
-# Start: docker compose up -d
-# Stop:  docker compose down
 
 services:
   proxy:
@@ -10,25 +7,29 @@ services:
     container_name: mini-nginx-proxy
     ports:
       - "8080:8080"
+      - "8081:8081"
     environment:
       PROXY_LISTEN_HOST: "0.0.0.0"
       PROXY_LISTEN_PORT: "8080"
+      METRICS_LISTEN_HOST: "0.0.0.0"
+      METRICS_LISTEN_PORT: "8081"
       # Upstreams by Docker service names (reachable inside network)
       UPSTREAM_HOSTS: "upstream1:9001,upstream2:9002"
       # Pyroscope настройки
       PYROSCOPE_SERVER: "http://pyroscope:4040"
       PYROSCOPE_APPLICATION_NAME: "python-proxy"
       # Дополнительные параметры для отладки
-      PYTHONUNBUFFERED: "1"  # Для немедленного вывода логов
+      # PYTHONUNBUFFERED: "1"  # Для немедленного вывода логов
       LOG_LEVEL: "INFO"
     depends_on:
       - upstream1
       - upstream2
     networks:
       - app
-    # Добавляем healthcheck
+    # Healthcheck: реальный HTTP-запрос, чтобы не было WARNING "Failed to parse request"
+    # (просто открытие сокета без HTTP даёт ошибку парсинга)
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8080)); s.close()"]
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',8080)); s.sendall(b'GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n'); d=s.recv(512); s.close(); assert b'HTTP' in d"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -89,20 +90,6 @@ services:
       retries: 3
       start_period: 20s
 
-  # =============== Grafana для визуализации ===============
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_INSTALL_PLUGINS=grafana-pyroscope-datasource
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning
-    networks:
-      - app
 
   # =============== Grafana K6 ===============
   k6:
@@ -121,7 +108,6 @@ services:
 # =============== VOLUMES ===============
 volumes:
   pyroscope_data:
-  grafana_data:
 
 # =============== NETWORK ===============
 networks:

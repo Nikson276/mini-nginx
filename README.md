@@ -154,7 +154,7 @@ custom_timeouts = TimeoutPolicy(
 ```bash
 # В одном терминале запустить upstream
 cd tests
-uvicorn echo_app:app --host 127.0.0.1 --port 9001 --workers 1
+uvicorn echo_app:app --host 127.0.0.1 --port 8000 --workers 1
 
 # Или  простой HTTP сервер
 python3 -m http.server 9001

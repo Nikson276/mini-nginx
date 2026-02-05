@@ -15,7 +15,7 @@ logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 # Simple upstream configuration (will be moved to config.py later)
 # For now, we proxy to a single upstream server
 UPSTREAM_HOST = '127.0.0.1'
-UPSTREAM_PORT = 9001
+UPSTREAM_PORT = 8000
 
 # Timeout policy (can be loaded from config later)
 # Default values: connect=1s, read=15s, write=15s, total=30s

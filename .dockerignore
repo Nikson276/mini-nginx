@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.venv
+venv
+env
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# IDE / OS
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Docs (not needed in runtime image)
+docs/
+*.md
+!tests/README.md
+
+# Tests (except echo_app for upstream image)
+tests/test_*.py
+tests/conftest.py
+tests/load_scenarios.md
+tests/test_limits_integration.sh
+
+# Docker (keep Dockerfile.* so compose can build)
+docker-compose*.yml
+.dockerignore

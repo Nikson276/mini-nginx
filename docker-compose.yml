@@ -1,0 +1,115 @@
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    container_name: mini-nginx-proxy
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      PROXY_LISTEN_HOST: "0.0.0.0"
+      PROXY_LISTEN_PORT: "8080"
+      METRICS_LISTEN_HOST: "0.0.0.0"
+      METRICS_LISTEN_PORT: "8081"
+      # Upstreams by Docker service names (reachable inside network)
+      UPSTREAM_HOSTS: "upstream1:9001,upstream2:9002"
+      # Pyroscope настройки
+      PYROSCOPE_SERVER: "http://pyroscope:4040"
+      PYROSCOPE_APPLICATION_NAME: "python-proxy"
+      # Дополнительные параметры для отладки
+      # PYTHONUNBUFFERED: "1"  # Для немедленного вывода логов
+      LOG_LEVEL: "INFO"
+    depends_on:
+      - upstream1
+      - upstream2
+    networks:
+      - app
+    # Healthcheck: реальный HTTP-запрос, чтобы не было WARNING "Failed to parse request"
+    # (просто открытие сокета без HTTP даёт ошибку парсинга)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',8080)); s.sendall(b'GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n'); d=s.recv(512); s.close(); assert b'HTTP' in d"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Добавляем метки для Pyroscope
+    labels:
+      - "pyroscope.app=python-proxy"
+      - "pyroscope.type=service"
+
+  upstream1:
+    build:
+      context: .
+      dockerfile: Dockerfile.upstream
+    container_name: mini-nginx-upstream1
+    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9001"]
+    expose:
+      - "9001"
+    environment:
+      - PYROSCOPE_SERVER=${PYROSCOPE_SERVER}
+      - PYROSCOPE_APPLICATION_NAME=${UPSTREAM1_APP_NAME}
+      - SERVICE_INSTANCE=1
+    networks:
+      - app
+
+  upstream2:
+    build:
+      context: .
+      dockerfile: Dockerfile.upstream
+    container_name: mini-nginx-upstream2
+    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9002"]
+    expose:
+      - "9002"
+    environment:
+      - PYROSCOPE_SERVER=${PYROSCOPE_SERVER}
+      - PYROSCOPE_APPLICATION_NAME=${UPSTREAM2_APP_NAME}
+      - SERVICE_INSTANCE=2
+    networks:
+      - app
+
+  # =============== Grafana Pyroscope ===============
+  pyroscope:
+    image: grafana/pyroscope:latest
+    container_name: pyroscope
+    ports:
+      - "4040:4040"
+    # Минимальная конфигурация - Pyroscope сам настроит storage
+    command: ["server"]
+    networks:
+      - app
+    volumes:
+      - pyroscope_data:/var/lib/pyroscope
+    environment:
+      - PYROSCOPE_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4040/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+
+  # =============== Grafana K6 ===============
+  k6:
+    image: grafana/k6:latest
+    container_name: mini-nginx-k6
+    command: ["run", "/scripts/load-test.js"]
+    volumes:
+      - ./tests/k6:/scripts
+    networks:
+      - app
+    environment:
+      # K6 тоже можно мониторить через Pyroscope
+      K6_PROMETHEUS_RW_SERVER_URL: "http://pyroscope:4040"
+    profiles: ["load-test"]
+
+# =============== VOLUMES ===============
+volumes:
+  pyroscope_data:
+
+# =============== NETWORK ===============
+networks:
+  app:
+    driver: bridge

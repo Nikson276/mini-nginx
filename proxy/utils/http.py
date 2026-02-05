@@ -6,7 +6,7 @@ from asyncio.streams import StreamReader, StreamWriter
 
 class HTTPRequest:
     """Represents a parsed HTTP request."""
-    
+
     def __init__(
         self,
         method: str,
@@ -14,12 +14,14 @@ class HTTPRequest:
         version: str,
         headers: Dict[str, str],
         reader: StreamReader,
+        trace_id: Optional[str] = None,
     ):
         self.method = method
         self.path = path
         self.version = version
         self.headers = headers
         self.reader = reader  # Raw stream for body
+        self.trace_id = trace_id
     
     def __repr__(self) -> str:
         return f"HTTPRequest(method={self.method!r}, path={self.path!r}, version={self.version!r})"
@@ -56,7 +58,11 @@ class HTTPRequest:
         elif headers_to_send.get('connection', '').lower() != 'close':
             # Override keep-alive to close for simplicity
             headers_to_send['connection'] = 'close'
-        
+
+        # Propagate trace_id to upstream for distributed tracing
+        if self.trace_id:
+            headers_to_send['x-trace-id'] = self.trace_id
+
         # Host header is required for HTTP/1.1
         # We'll use the original host from client request
         # (in a real proxy, you might want to modify this)

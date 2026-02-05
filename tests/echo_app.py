@@ -8,8 +8,38 @@ Or use Python's built-in server:
     python3 -m http.server 9001
 """
 
+import pyroscope
+import os
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+
+
+def init_pyroscope_from_env():
+    """Читаем все настройки из переменных окружения"""
+    config = {
+        'application_name': os.getenv('PYROSCOPE_APPLICATION_NAME', 'upstream-default'),
+        'server_address': os.getenv('PYROSCOPE_SERVER', 'http://pyroscope:4040'),
+        'tags': {
+            'service': 'echo',
+            'type': 'upstream',
+            'instance': os.getenv('SERVICE_INSTANCE', '0'),
+            'port': os.getenv('PORT', '9000'),
+            'host': os.getenv('HOSTNAME', 'unknown')
+        }
+    }
+    
+    # Добавляем кастомные теги если есть
+    custom_tags = os.getenv('PYROSCOPE_CUSTOM_TAGS', '')
+    if custom_tags:
+        for tag in custom_tags.split(','):
+            if '=' in tag:
+                key, val = tag.split('=', 1)
+                config['tags'][key.strip()] = val.strip()
+    
+    pyroscope.configure(**config)
+    print(f"Pyroscope configured: {config['application_name']}")
+
+init_pyroscope_from_env()
 
 app = FastAPI()
 

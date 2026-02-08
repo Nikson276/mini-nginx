@@ -1,16 +1,16 @@
 """Client connection handler for processing HTTP requests."""
 
 import asyncio
-import logging
 from typing import Optional, Tuple
 from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.utils.http import HTTPRequest
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
 from proxy import metrics
+from proxy.logger import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 class ClientConnectionHandler:
@@ -94,12 +94,9 @@ class ClientConnectionHandler:
         upstream_port = upstream.port
         
         try:
-            logger.info(
-                'Connecting to upstream %s:%d for %s %s',
-                upstream_host,
-                upstream_port,
-                request.method,
-                request.path,
+            await logger.info(
+                'Connecting to upstream %s:%d for %s %s'
+                % (upstream_host, upstream_port, request.method, request.path)
             )
             
             # 1. Connect to upstream server with CONNECT timeout and connection limit
@@ -130,11 +127,9 @@ class ClientConnectionHandler:
             except asyncio.TimeoutError:
                 await metrics.record_timeout_error("connect")
                 await metrics.record_upstream_error(upstream_host, upstream_port, "timeout")
-                logger.error(
-                    'Connection to upstream %s:%d timed out after %dms',
-                    upstream_host,
-                    upstream_port,
-                    self.timeout_policy.connect_ms,
+                await logger.error(
+                    'Connection to upstream %s:%d timed out after %dms'
+                    % (upstream_host, upstream_port, self.timeout_policy.connect_ms)
                 )
                 raise
             except (ConnectionRefusedError, OSError, ConnectionError) as e:
@@ -143,26 +138,23 @@ class ClientConnectionHandler:
                 # Пробрасываем ошибку наверх - там она будет обработана и залогирована
                 raise
             
-            logger.info('Connected to upstream %s:%d', upstream_host, upstream_port)
+            await logger.info('Connected to upstream %s:%d' % (upstream_host, upstream_port))
             
             # 2. Send request to upstream with WRITE timeout
             # This writes: start line + headers + empty line + body (streamed)
             # If upstream is slow to accept data, we timeout
-            logger.debug('Sending request to upstream: %s %s', request.method, request.path)
+            await logger.debug('Sending request to upstream: %s %s' % (request.method, request.path))
             try:
                 await self.timeout_policy.with_write_timeout(
                     request.write_to_upstream(upstream_writer)
                 )
             except asyncio.TimeoutError:
-                logger.error(
-                    'Write to upstream %s:%d timed out after %dms trace_id=%s',
-                    upstream_host,
-                    upstream_port,
-                    self.timeout_policy.write_ms,
-                    self.trace_id,
+                await logger.error(
+                    'Write to upstream %s:%d timed out after %dms trace_id=%s'
+                    % (upstream_host, upstream_port, self.timeout_policy.write_ms, self.trace_id)
                 )
                 raise
-            logger.debug('Request sent to upstream, waiting for response...')
+            await logger.debug('Request sent to upstream, waiting for response...')
             
             # 3. Stream response from upstream to client
             # We read the entire response (headers + body) and forward it
@@ -191,11 +183,9 @@ class ClientConnectionHandler:
                             upstream_reader.read(chunk_size)
                         )
                     except asyncio.TimeoutError:
-                        logger.error(
-                            'Read from upstream %s:%d timed out after %dms',
-                            upstream_host,
-                            upstream_port,
-                            self.timeout_policy.read_ms,
+                        await logger.error(
+                            'Read from upstream %s:%d timed out after %dms'
+                            % (upstream_host, upstream_port, self.timeout_policy.read_ms)
                         )
                         await metrics.record_timeout_error("read")
                         await metrics.record_upstream_error(upstream_host, upstream_port, "timeout")
@@ -204,18 +194,20 @@ class ClientConnectionHandler:
                     if not chunk:  # No data received
                         # Check if connection is closed
                         if upstream_reader.at_eof():
-                            logger.debug('Upstream connection closed (EOF)')
+                            await logger.debug('Upstream connection closed (EOF)')
                             break
                         # If not EOF but no data, might be keep-alive waiting
                         # Since we sent Connection: close, this shouldn't happen
                         # But let's break anyway to avoid infinite loop
-                        logger.warning('No data from upstream but connection not closed')
+                        await logger.warning('No data from upstream but connection not closed')
                         break
                     
                     if first_chunk:
                         response_status = self._parse_status_from_chunk(chunk)
-                        logger.debug('Received first chunk from upstream (%d bytes): %s',
-                                   len(chunk), chunk[:100] if len(chunk) > 100 else chunk)
+                        await logger.debug(
+                            'Received first chunk from upstream (%d bytes): %s'
+                            % (len(chunk), chunk[:100] if len(chunk) > 100 else chunk)
+                        )
                         first_chunk = False
 
                     total_bytes += len(chunk)
@@ -232,20 +224,15 @@ class ClientConnectionHandler:
                 # Re-raise timeout errors (already logged above)
                 raise
             except Exception as e:
-                logger.error('Error reading response from upstream: %s', e, exc_info=True)
+                await logger.error('Error reading response from upstream: %s' % (e,), exc_info=True)
                 raise
 
             # Ensure all data is sent to client
             await self.writer.drain()
             
-            logger.info(
-                'Finished proxying %s %s to %s:%d (%d bytes)(%d response_status)',
-                request.method,
-                request.path,
-                upstream_host,
-                upstream_port,
-                total_bytes,
-                response_status
+            await logger.info(
+                'Finished proxying %s %s to %s:%d (%d bytes)(%d response_status)'
+                % (request.method, request.path, upstream_host, upstream_port, total_bytes, response_status)
             )
             return (response_status, total_bytes)
 
@@ -270,11 +257,8 @@ class ClientConnectionHandler:
             await metrics.record_response_status(502)
             err_type = "connection_refused" if isinstance(e, ConnectionRefusedError) else "other"
             await metrics.record_upstream_error(upstream_host, upstream_port, err_type)
-            logger.error(
-                'Cannot connect to upstream %s:%d: %s',
-                upstream_host,
-                upstream_port,
-                e,
+            await logger.error(
+                'Cannot connect to upstream %s:%d: %s' % (upstream_host, upstream_port, e)
             )
             try:
                 error_response = (
@@ -291,17 +275,14 @@ class ClientConnectionHandler:
             raise
         
         except asyncio.CancelledError:
-            logger.warning('Proxy task cancelled for %s %s', request.method, request.path)
+            await logger.warning('Proxy task cancelled for %s %s' % (request.method, request.path))
             raise
         
         except Exception as e:
             await metrics.record_response_status(502)
             await metrics.record_upstream_error(upstream_host, upstream_port, "other")
-            logger.error(
-                'Error proxying to %s:%d: %s',
-                upstream_host,
-                upstream_port,
-                e,
+            await logger.error(
+                'Error proxying to %s:%d: %s' % (upstream_host, upstream_port, e),
                 exc_info=True,
             )
             try:
@@ -344,7 +325,7 @@ class ClientConnectionHandler:
             # Parse start line: METHOD PATH VERSION
             parts = start_line.split()
             if len(parts) != 3:
-                logger.warning("Invalid start line from %s: %s", self.address, start_line)
+                await logger.warning("Invalid start line from %s: %s" % (self.address, start_line))
                 return None
             
             method, path, version = parts
@@ -365,7 +346,7 @@ class ClientConnectionHandler:
             )
         
         except Exception as e:
-            logger.error("Error parsing request from %s: %s", self.address, e)
+            await logger.error("Error parsing request from %s: %s" % (self.address, e))
             return None
     
     async def _read_line(self) -> Optional[str]:
@@ -398,7 +379,7 @@ class ClientConnectionHandler:
             
             # Parse header: "Name: Value"
             if ':' not in line:
-                logger.warning("Invalid header line from %s: %s", self.address, line)
+                await logger.warning("Invalid header line from %s: %s" % (self.address, line))
                 continue
             
             name, value = line.split(':', 1)

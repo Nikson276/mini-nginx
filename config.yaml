@@ -21,4 +21,4 @@ limits:
   max_conns_per_upstream: 5
 
 logging:
-  level: "warning"
+  level: "info"

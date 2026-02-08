@@ -396,7 +396,8 @@ CONNECTION_LIMITS = ConnectionLimitManager(custom_limits)
 
 Для каждого входящего запроса прокси генерирует **trace_id** (UUID) и прокидывает его по всему пути: в логах и в заголовке **X-Trace-ID** при запросе к upstream. По одному значению trace_id можно проследить путь запроса от клиента до upstream и обратно.
 
-- **Логи**: в каждой строке лога при наличии контекста добавляется суффикс ` trace_id=<uuid>`. Формат: `%(asctime)s - %(name)s - %(levelname)s - %(message)s trace_id=...`
+- **Логи**: асинхронное логирование через **aiologger** (не блокирует event loop). В каждой строке при наличии контекста добавляется суффикс ` trace_id=<uuid>`. Формат: `%(asctime)s - %(name)s - %(levelname)s - %(message)s trace_id=...`
+- **Уровень логирования**: задаётся в конфиге (файл или env) — `logging.level` в YAML или переменная `LOG_LEVEL` (значения: debug, info, warning, error). При перезагрузке конфига (SIGHUP) уровень обновляется без перезапуска.
 - **Метрики**: отдельный HTTP-сервер на порту **8081** (по умолчанию) отдаёт ручку **GET /metrics** в формате Prometheus (text/plain).
 
 Переменные окружения:

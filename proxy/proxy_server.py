@@ -1,4 +1,3 @@
-import logging
 import sys
 import asyncio
 import uuid
@@ -6,13 +5,12 @@ from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.client_handler import ClientConnectionHandler
 from proxy.upstream_pool import Upstream
-from proxy.logger import trace_id_ctx
+from proxy.logger import get_logger, trace_id_ctx
 from proxy import metrics
 from proxy.config import get_config
 
 
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.StreamHandler(stream=sys.stdout))
+logger = get_logger()
 
 
 async def client_connected(reader: StreamReader, writer: StreamWriter):
@@ -30,7 +28,7 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
     """
     cfg = get_config()
     if cfg is None:
-        logger.error("Config not initialized")
+        await logger.error("Config not initialized")
         writer.close()
         return
 
@@ -39,7 +37,7 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
     token = trace_id_ctx.set(trace_id)
 
     async with cfg.connection_limits.client_connection():
-        logger.info('Client connected: %s', address)
+        await logger.info('Client connected: %s' % (address,))
 
         handler = ClientConnectionHandler(
             reader,
@@ -53,26 +51,20 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
             request = await handler.parse_request()
             if not request:
                 await metrics.record_parse_error()
-                logger.warning('Failed to parse request from %s', address)
+                await logger.warning('Failed to parse request from %s' % (address,))
                 return
 
             start_time = await metrics.record_request_start()
-            logger.info(
-                'Request: %s %s %s from %s',
-                request.method,
-                request.path,
-                request.version,
-                address,
+            await logger.info(
+                'Request: %s %s %s from %s'
+                % (request.method, request.path, request.version, address)
             )
-            logger.debug('Headers: %s', request.headers)
+            await logger.debug('Headers: %s' % (request.headers,))
 
             upstream = await cfg.upstream_pool.get_next()
-            logger.info(
-                'Selected upstream %s:%d for %s %s (round-robin)',
-                upstream.host,
-                upstream.port,
-                request.method,
-                request.path
+            await logger.info(
+                'Selected upstream %s:%d for %s %s (round-robin)'
+                % (upstream.host, upstream.port, request.method, request.path)
             )
             
             # 3. Proxy request to selected upstream
@@ -87,14 +79,14 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
                 )
 
         except asyncio.CancelledError:
-            logger.warning('Client connection cancelled: %s', address)
+            await logger.warning('Client connection cancelled: %s' % (address,))
             raise
 
         except Exception as e:
-            logger.error('Error handling client %s: %s', address, e, exc_info=True)
+            await logger.error('Error handling client %s: %s' % (address, e), exc_info=True)
 
         finally:
-            logger.info('Client disconnected: %s', address)
+            await logger.info('Client disconnected: %s' % (address,))
             trace_id_ctx.reset(token)
             writer.close()
             try:

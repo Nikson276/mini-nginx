@@ -14,8 +14,8 @@ from proxy.upstream_pool import UpstreamPool, Upstream
 from proxy.timeouts import TimeoutPolicy
 from proxy.limits import ConnectionLimitManager, ConnectionLimits
 
-
-logger = logging.getLogger(__name__)
+# Sync logger for load_config() only — called before event loop exists, so aiologger cannot be used.
+_load_log = logging.getLogger("proxy.config")
 
 
 def _parse_listen(value: str) -> Tuple[str, int]:
@@ -124,7 +124,7 @@ def load_config(path: Union[str, Path]) -> Optional[ConfigHolder]:
     global _current
     path = Path(path)
     if not path.is_file():
-        logger.warning("Config file not found: %s", path)
+        _load_log.warning("Config file not found: %s", str(path))
         return _current
     try:
         raw = path.read_text(encoding="utf-8")
@@ -134,10 +134,13 @@ def load_config(path: Union[str, Path]) -> Optional[ConfigHolder]:
         model = ConfigModel.model_validate(data)
         holder = ConfigHolder(model)
         _current = holder
-        logger.info("Config loaded from %s (listen=%s, upstreams=%d)", path, model.listen, len(model.upstreams))
+        _load_log.info(
+            "Config loaded from %s (listen=%s, upstreams=%d)",
+            str(path), model.listen, len(model.upstreams),
+        )
         return holder
     except Exception as e:
-        logger.error("Failed to load config from %s: %s", path, e, exc_info=True)
+        _load_log.error("Failed to load config from %s: %s", str(path), e, exc_info=True)
         return _current
 
 

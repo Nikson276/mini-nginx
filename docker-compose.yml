@@ -9,18 +9,18 @@ services:
       - "8080:8080"
       - "8081:8081"
     environment:
+      # При наличии /app/config.yaml в образе эти переменные не используются
       PROXY_LISTEN_HOST: "0.0.0.0"
       PROXY_LISTEN_PORT: "8080"
       METRICS_LISTEN_HOST: "0.0.0.0"
       METRICS_LISTEN_PORT: "8081"
-      # Upstreams by Docker service names (reachable inside network)
       UPSTREAM_HOSTS: "upstream1:9001,upstream2:9002"
-      # Pyroscope настройки
       PYROSCOPE_SERVER: "http://pyroscope:4040"
       PYROSCOPE_APPLICATION_NAME: "python-proxy"
-      # Дополнительные параметры для отладки
-      # PYTHONUNBUFFERED: "1"  # Для немедленного вывода логов
       LOG_LEVEL: "INFO"
+    # Горячая перезагрузка конфига: смонтируйте config.yaml с хоста, редактируйте и шлите SIGHUP контейнеру
+    volumes:
+      - ./config.yaml:/app/config.yaml
     depends_on:
       - upstream1
       - upstream2
@@ -28,12 +28,13 @@ services:
       - app
     # Healthcheck: реальный HTTP-запрос, чтобы не было WARNING "Failed to parse request"
     # (просто открытие сокета без HTTP даёт ошибку парсинга)
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',8080)); s.sendall(b'GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n'); d=s.recv(512); s.close(); assert b'HTTP' in d"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    # убираю пока, чтобы не засорять логи
+    # healthcheck:
+    #   test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',8080)); s.sendall(b'GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n'); d=s.recv(512); s.close(); assert b'HTTP' in d"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     # Добавляем метки для Pyroscope
     labels:
       - "pyroscope.app=python-proxy"

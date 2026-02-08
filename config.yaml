@@ -1,0 +1,24 @@
+# Конфиг для запуска в Docker Compose (уже в образе как /app/config.yaml).
+# Для горячей перезагрузки смонтируйте свой config.yaml с хоста (см. docker-compose.yml).
+
+listen: "0.0.0.0:8080"
+metrics_listen: "0.0.0.0:8081"
+
+upstreams:
+  - host: "upstream1"
+    port: 9001
+  - host: "upstream2"
+    port: 9002
+
+timeouts:
+  connect_ms: 1000
+  read_ms: 15000
+  write_ms: 15000
+  total_ms: 30000
+
+limits:
+  max_client_conns: 10
+  max_conns_per_upstream: 5
+
+logging:
+  level: "warning"

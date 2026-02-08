@@ -26,22 +26,49 @@ docker compose run --rm k6
 Проверка с хоста: `curl http://127.0.0.1:8080/`  
 Из контейнера (например, будущий k6): `http://proxy:8080`
 
-Переменные окружения для прокси в Docker:
+В образ прокси уже встроен конфиг `config.docker.yaml` (копируется как `/app/config.yaml`) с `listen: 0.0.0.0:8080`, upstream'ами `upstream1:9001`, `upstream2:9002`. Переменные окружения при наличии файла не используются.
+
+**Горячая перезагрузка конфига в Docker:**
+1. В корне проекта создайте `config.yaml` (скопируйте из `config.docker.yaml` или `config.example.yaml`).
+2. В `docker-compose.yml` раскомментируйте секцию `volumes` у сервиса `proxy`:
+   ```yaml
+   volumes:
+     - ./config.yaml:/app/config.yaml
+   ```
+3. Запустите: `docker compose up -d proxy`.
+4. Отредактируйте `config.yaml` на хосте (например, измените `logging.level` на `debug`).
+5. Отправьте процессу прокси сигнал SIGHUP — конфиг перечитается без перезапуска контейнера:
+   ```bash
+   docker compose kill -s HUP proxy
+   ```
+6. В логах должно появиться: `Config reloaded from /app/config.yaml (logging level=debug)`.
+
+Переменные окружения для прокси (если конфиг не используется):
 - `UPSTREAM_HOSTS` — список upstream (по умолчанию `upstream1:9001,upstream2:9002`)
-- `PROXY_LISTEN_HOST` / `PROXY_LISTEN_PORT` — хост/порт прокси (в контейнере уже 0.0.0.0:8080)
-- `METRICS_LISTEN_HOST` / `METRICS_LISTEN_PORT` — хост/порт для ручки `/metrics` (по умолчанию 127.0.0.1:8081)
+- `PROXY_LISTEN_HOST` / `PROXY_LISTEN_PORT` — хост/порт прокси
+- `METRICS_LISTEN_HOST` / `METRICS_LISTEN_PORT` — хост/порт для `/metrics`
+
+#### ПРИОРИТЕТ конфигов (от высокого к низкому):
+
+1. Volume (./config.yaml:/app/config.yaml) ← ЕСЛИ подключен
+2. Файл в образе (/app/config.yaml из COPY config.docker.yaml)
+3. Переменные окружения (если поддерживается)
 
 ### Локально (без Docker)
 
 ```bash
-# Запуск с параметрами по умолчанию (127.0.0.1:8080)
+# Запуск с параметрами по умолчанию (127.0.0.1:8080) или из config.yaml, если файл есть
 python3 -m proxy.main
 
-# Или с указанием хоста и порта
+# С указанием хоста и порта (переопределяют конфиг)
 python3 -m proxy.main 127.0.0.1 8080
+
+# С конфигом из файла
+python3 -m proxy.main /path/to/config.yaml
+CONFIG_PATH=/path/to/config.yaml python3 -m proxy.main
 ```
 
-Для round-robin поднимите два upstream вручную (см. раздел «Тестирование»).
+При отсутствии `config.yaml` (и `CONFIG_PATH`) параметры берутся из переменных окружения. Для round-robin поднимите два upstream вручную (см. раздел «Тестирование»).
 
 ## Текущий статус
 
@@ -56,6 +83,8 @@ python3 -m proxy.main 127.0.0.1 8080
 - ✅ Переход в контейнеры Docker для упрощения поднятия и тестов
 - ✅ Добавил pyroscope для сбора метрик cpu по компонентам
 - ✅ Логирование с trace_id и метрики: ручка `/metrics` на отдельном порту (Prometheus-формат)
+- ✅ Конфиг из файла (YAML, Pydantic). Горячая перезагрузка конфигурации (SIGHUP) без остановки сервера.
+- (В разработке) HTTP/1.1 keep‑alive пул к апстримам, повторное использование соединений.
 
 ## Что реализовано
 
@@ -388,8 +417,44 @@ curl http://127.0.0.1:8081/metrics
 - `proxy_upstream_errors_total{upstream,type="timeout|connection_refused|other"}` — ошибок при обращении к upstream
 - `proxy_timeout_errors_total{type="connect|read|write|total"}` — таймауты по типу
 
+### Конфигурация из файла (YAML)
+
+Параметры прокси можно задать в YAML-файле (валидация через Pydantic). При отсутствии файла используются переменные окружения (как раньше).
+
+**Путь к конфигу:** переменная `CONFIG_PATH`, или первый аргумент командной строки (если не host:port), или файл `config.yaml` в текущей директории. Пример файла: `config.example.yaml` в корне проекта.
+
+**Пример `config.yaml`:**
+```yaml
+listen: "127.0.0.1:8080"
+metrics_listen: "127.0.0.1:8081"
+upstreams:
+  - host: "127.0.0.1"
+    port: 9001
+  - host: "127.0.0.1"
+    port: 9002
+timeouts:
+  connect_ms: 1000
+  read_ms: 15000
+  write_ms: 15000
+  total_ms: 30000
+limits:
+  max_client_conns: 1000
+  max_conns_per_upstream: 100
+logging:
+  level: "info"
+```
+
+**Горячая перезагрузка (SIGHUP):** после изменения конфига отправьте процессу сигнал SIGHUP — конфиг будет перечитан без остановки сервера. Новые соединения используют обновлённые параметры.
+
+```bash
+kill -HUP $(cat proxy.pid)
+# или по имени процесса
+kill -HUP $(pgrep -f "python -m proxy.main")
+```
 
 ## Тестирование
+
+### [Нагрузочные тесты](./tests/load_scenarios.md)
 
 ### Юнит-тесты
 

@@ -1,0 +1,24 @@
+# Пример конфигурации прокси (YAML).
+# Скопируйте в config.yaml или укажите путь через CONFIG_PATH / аргумент.
+
+listen: "127.0.0.1:8080"
+metrics_listen: "127.0.0.1:8081"
+
+upstreams:
+  - host: "127.0.0.1"
+    port: 9001
+  - host: "127.0.0.1"
+    port: 9002
+
+timeouts:
+  connect_ms: 1000
+  read_ms: 15000
+  write_ms: 15000
+  total_ms: 30000
+
+limits:
+  max_client_conns: 1000
+  max_conns_per_upstream: 100
+
+logging:
+  level: "info"

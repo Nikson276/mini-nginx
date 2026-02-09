@@ -45,7 +45,7 @@ services:
       context: .
       dockerfile: Dockerfile.upstream
     container_name: mini-nginx-upstream1
-    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9001"]
+    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9001", "--workers", "4", "--loop", "uvloop"]
     expose:
       - "9001"
     environment:
@@ -60,7 +60,7 @@ services:
       context: .
       dockerfile: Dockerfile.upstream
     container_name: mini-nginx-upstream2
-    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9002"]
+    command: ["uvicorn", "tests.echo_app:app", "--host", "0.0.0.0", "--port", "9002", "--workers", "4", "--loop", "uvloop"]
     expose:
       - "9002"
     environment:

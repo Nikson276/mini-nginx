@@ -25,6 +25,7 @@ k6 run tests/k6/load-test-vegeta-like.js # 500 RPS, 30 с
 В Docker Compose:
 
 ```bash
+docker compose --profile load-test run --rm k6 run /scripts/load-test.js
 docker compose --profile load-test run --rm k6 run /scripts/load-test-wrk-like.js
 docker compose --profile load-test run --rm k6 run /scripts/load-test-ab-like.js
 docker compose --profile load-test run --rm k6 run /scripts/load-test-vegeta-like.js

@@ -101,7 +101,9 @@ async def main(host: str, port: int):
         host,
         port,
         reuse_address=True,
-        reuse_port=True 
+        reuse_port=True,
+        limit=256*1024,      # 256KB вместо 64KB
+        backlog=65535
     )
 
     async with srv:

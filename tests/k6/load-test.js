@@ -4,13 +4,13 @@ import http from 'k6/http'
 
 export const options = {
   thresholds: {
-    http_reqs: ['count>=1500']
+    http_reqs: ['count>=10000']
   },
   stages: [
-    { target: 150, duration: '1m' },
-    { target: 500, duration: '1m30s' },
-    { target: 600, duration: '30s' },
-    { target: 1000, duration: '30s' },
+    { duration: '30s', target: 100 },  // Базовый уровень
+    { duration: '1m', target: 300 },   // Нормальная нагрузка
+    { duration: '1m', target: 500 },   // Пиковая нагрузка
+    { duration: '30s', target: 100 },  // Восстановление
   ],
 }
 

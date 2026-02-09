@@ -6,6 +6,7 @@ from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.utils.http import HTTPRequest
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
+from proxy.limits import ConnectionLimitManager
 from proxy import metrics
 from proxy.logger import get_logger
 
@@ -21,7 +22,7 @@ class ClientConnectionHandler:
         reader: StreamReader,
         writer: StreamWriter,
         timeout_policy: Optional[TimeoutPolicy] = None,
-        limit_manager=None,  # ConnectionLimitManager, optional
+        limit_manager: Optional[ConnectionLimitManager] = None,  # ConnectionLimitManager, optional
         trace_id: Optional[str] = None,
     ):
         self.reader = reader

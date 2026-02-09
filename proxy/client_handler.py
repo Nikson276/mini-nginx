@@ -7,6 +7,8 @@ from asyncio.streams import StreamReader, StreamWriter
 from proxy.utils.http import HTTPRequest
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
 from proxy.limits import ConnectionLimitManager
+from proxy.connection_pool import ConnectionPool
+from proxy.circuit_breaker import CircuitBreakerManager, CircuitOpenError
 from proxy import metrics
 from proxy.logger import get_logger
 
@@ -23,6 +25,8 @@ class ClientConnectionHandler:
         writer: StreamWriter,
         timeout_policy: Optional[TimeoutPolicy] = None,
         limit_manager: Optional[ConnectionLimitManager] = None,  # ConnectionLimitManager, optional
+        connection_pool: Optional[ConnectionPool] = None,
+        circuit_breaker_manager: Optional[CircuitBreakerManager] = None,
         trace_id: Optional[str] = None,
     ):
         self.reader = reader
@@ -30,6 +34,8 @@ class ClientConnectionHandler:
         self.address = writer.get_extra_info('peername')
         self.timeout_policy = timeout_policy or DEFAULT_TIMEOUT_POLICY
         self.limit_manager = limit_manager
+        self.connection_pool = connection_pool
+        self.circuit_breaker_manager = circuit_breaker_manager
         self.trace_id = trace_id or ''
     
     async def proxy_to_upstream(
@@ -60,12 +66,48 @@ class ClientConnectionHandler:
         # Extract host and port from Upstream object
         upstream_host = upstream.host
         upstream_port = upstream.port
+
+        # 1. Получаем circuit breaker для этого upstream
+        if self.circuit_breaker_manager:
+            circuit_breaker = self.circuit_breaker_manager.get_breaker(
+                upstream.host, upstream.port
+            )
+        else:
+            circuit_breaker = None
+
+        # 2. Обертка в circuit breaker
+        async def _proxy_with_circuit():
+            return await self.timeout_policy.with_total_timeout(
+                self._proxy_to_upstream_internal(request, upstream)
+            )
         
+        try:
+            if circuit_breaker:
+                return await circuit_breaker.execute(_proxy_with_circuit)
+            else:
+                return await _proxy_with_circuit()
+                
+        except CircuitOpenError:
+            await metrics.record_response_status(503)
+            await logger.warning(
+                f"Circuit open for {upstream.host}:{upstream.port}, "
+                f"fast failing request"
+            )
+            error_response = (
+                f"{request.version} 503 Service Unavailable\r\n"
+                "Content-Type: text/plain\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                f"Upstream {upstream.host}:{upstream.port} temporarily unavailable"
+            )
+            self.writer.write(error_response.encode())
+            await self.writer.drain()
+            raise
         # Wrap entire proxy operation in total timeout
         # This ensures no request takes longer than total_ms
-        return await self.timeout_policy.with_total_timeout(
-            self._proxy_to_upstream_internal(request, upstream)
-        )
+        # return await self.timeout_policy.with_total_timeout(
+        #     self._proxy_to_upstream_internal(request, upstream)
+        # )
     
     def _parse_status_from_chunk(self, chunk: bytes) -> int:
         """Parse HTTP status code from first line of response chunk (e.g. HTTP/1.1 200 OK)."""

@@ -13,6 +13,8 @@ from pydantic import BaseModel, field_validator
 from proxy.upstream_pool import UpstreamPool, Upstream
 from proxy.timeouts import TimeoutPolicy
 from proxy.limits import ConnectionLimitManager, ConnectionLimits
+from proxy.connection_pool import ConnectionPool, ConnectionPoolConfig
+from proxy.circuit_breaker import CircuitBreakerManager, CircuitBreakerConfig
 
 # Sync logger for load_config() only — called before event loop exists, so aiologger cannot be used.
 _load_log = logging.getLogger("proxy.config")
@@ -47,6 +49,23 @@ class LimitsConfig(BaseModel):
     max_conns_per_upstream: int = 100
 
 
+class ConnectionPoolConfigModel(BaseModel):
+    """Config section for HTTP keep-alive connection pool."""
+    max_size: int = 50
+    max_connections_per_host: int = 25
+    idle_timeout: float = 15.0
+    connect_timeout: float = 2.0
+    read_timeout: float = 10.0
+
+
+class CircuitBreakerConfigModel(BaseModel):
+    """Config section for circuit breaker."""
+    failure_threshold: int = 5
+    recovery_timeout: float = 10.0
+    half_open_max_requests: int = 1
+    timeout: float = 2.0
+
+
 class LoggingConfig(BaseModel):
     level: str = "info"
 
@@ -64,6 +83,8 @@ class ConfigModel(BaseModel):
     timeouts: TimeoutsConfig = TimeoutsConfig()
     limits: LimitsConfig = LimitsConfig()
     logging: LoggingConfig = LoggingConfig()
+    connection_pool: ConnectionPoolConfigModel = ConnectionPoolConfigModel()
+    circuit_breaker: CircuitBreakerConfigModel = CircuitBreakerConfigModel()
 
     @property
     def listen_host(self) -> str:
@@ -88,10 +109,18 @@ class ConfigModel(BaseModel):
 
 class ConfigHolder:
     """
-    Holds validated config and derived objects (UpstreamPool, TimeoutPolicy, ConnectionLimitManager).
+    Holds validated config and derived objects (UpstreamPool, TimeoutPolicy,
+    ConnectionLimitManager, ConnectionPool, CircuitBreakerManager).
     Replaced atomically on reload.
     """
-    __slots__ = ("model", "upstream_pool", "timeout_policy", "connection_limits")
+    __slots__ = (
+        "model",
+        "upstream_pool",
+        "timeout_policy",
+        "connection_limits",
+        "connection_pool",
+        "circuit_breaker_manager",
+    )
 
     def __init__(self, model: ConfigModel):
         self.model = model
@@ -110,6 +139,25 @@ class ConfigHolder:
             max_client_conns=model.limits.max_client_conns,
             max_conns_per_upstream=model.limits.max_conns_per_upstream,
         ))
+        # HTTP/1.1 keep-alive pool for upstreams (aiohttp)
+        self.connection_pool = ConnectionPool(
+            config=ConnectionPoolConfig(
+                max_size=model.connection_pool.max_size,
+                max_connections_per_host=model.connection_pool.max_connections_per_host,
+                idle_timeout=model.connection_pool.idle_timeout,
+                connect_timeout=model.connection_pool.connect_timeout,
+                read_timeout=model.connection_pool.read_timeout,
+            )
+        )
+        # Circuit breaker per-upstream
+        self.circuit_breaker_manager = CircuitBreakerManager(
+            default_config=CircuitBreakerConfig(
+                failure_threshold=model.circuit_breaker.failure_threshold,
+                recovery_timeout=model.circuit_breaker.recovery_timeout,
+                half_open_max_requests=model.circuit_breaker.half_open_max_requests,
+                timeout=model.circuit_breaker.timeout,
+            )
+        )
 
 
 # Current config (atomic reference); None = use env fallback until first load
@@ -183,5 +231,6 @@ def build_fallback_from_env() -> ConfigHolder:
         timeouts=TimeoutsConfig(),
         limits=LimitsConfig(max_client_conns=500, max_conns_per_upstream=100),
         logging=LoggingConfig(level=os.environ.get("LOG_LEVEL", "info")),
+        # Для env-пути пока оставляем значения по умолчанию для connection_pool и circuit_breaker
     )
     return ConfigHolder(model)

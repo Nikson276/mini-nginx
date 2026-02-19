@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Dict
 from dataclasses import dataclass
 from enum import Enum
 from proxy.logger import get_logger
@@ -106,16 +106,18 @@ class CircuitBreaker:
 class CircuitBreakerManager:
     """Менеджер circuit breakers для всех upstream."""
     
-    def __init__(self):
+    def __init__(self, default_config: Optional[CircuitBreakerConfig] = None):
         self._breakers: Dict[str, CircuitBreaker] = {}
         self._lock = asyncio.Lock()
+        self._default_config = default_config or CircuitBreakerConfig()
     
     def get_breaker(self, upstream_host: str, upstream_port: int) -> CircuitBreaker:
         """Получить или создать circuit breaker для upstream."""
         key = f"{upstream_host}:{upstream_port}"
         
         if key not in self._breakers:
-            self._breakers[key] = CircuitBreaker(name=key)
+            # Используем общий конфиг для всех upstream (можно расширить до пер-upstream)
+            self._breakers[key] = CircuitBreaker(name=key, config=self._default_config)
         
         return self._breakers[key]
 

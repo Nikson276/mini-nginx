@@ -38,6 +38,23 @@ class ClientConnectionHandler:
         self.circuit_breaker_manager = circuit_breaker_manager
         self.trace_id = trace_id or ''
     
+    def should_keep_alive(self, request: HTTPRequest) -> bool:
+        """
+        Decide whether to keep client connection alive after this request.
+        
+        HTTP/1.1: keep-alive по умолчанию, кроме Connection: close.
+        HTTP/1.0: закрываем по умолчанию, кроме Connection: keep-alive.
+        """
+        version = (request.version or "").upper()
+        connection_hdr = request.headers.get("connection", "").lower()
+
+        if version == "HTTP/1.1":
+            return connection_hdr != "close"
+        if version == "HTTP/1.0":
+            return connection_hdr == "keep-alive"
+        # Для прочих версий ведем себя консервативно
+        return False
+    
     async def proxy_to_upstream(
         self,
         request: HTTPRequest,
@@ -129,13 +146,84 @@ class ClientConnectionHandler:
         Internal method that does the actual proxying.
         Called from proxy_to_upstream which wraps it in total timeout.
         """
+        # 1. Сначала пробуем HTTP/1.1 keep-alive пул (aiohttp)
+        if self.connection_pool is not None:
+            upstream_host = upstream.host
+            upstream_port = upstream.port
+            try:
+                session = await self.connection_pool.get_session(upstream)
+                keep_client_alive = self.should_keep_alive(request)
+                return await self._proxy_with_aiohttp(
+                    request, upstream, session, keep_client_alive=keep_client_alive
+                )
+            except asyncio.TimeoutError:
+                # Таймаут при работе с upstream (через aiohttp)
+                await metrics.record_response_status(504)
+                await metrics.record_timeout_error("total")
+                try:
+                    error_response = (
+                        f"{request.version} 504 Gateway Timeout\r\n"
+                        "Content-Type: text/plain\r\n"
+                        "Connection: close\r\n"
+                        "\r\n"
+                        "Upstream timeout"
+                    )
+                    self.writer.write(error_response.encode())
+                    await self.writer.drain()
+                except Exception:
+                    pass
+                raise
+            except Exception as e:
+                # Любая ошибка при работе через пул — как 502 Bad Gateway
+                await metrics.record_response_status(502)
+                await metrics.record_upstream_error(upstream_host, upstream_port, "other")
+                await logger.error(
+                    'Error proxying via connection pool to %s:%d: %s'
+                    % (upstream_host, upstream_port, e),
+                    exc_info=True,
+                )
+                try:
+                    error_response = (
+                        f"{request.version} 502 Bad Gateway\r\n"
+                        "Content-Type: text/plain\r\n"
+                        "Connection: close\r\n"
+                        "\r\n"
+                        f"Upstream error: {str(e)}"
+                    )
+                    self.writer.write(error_response.encode())
+                    await self.writer.drain()
+                except Exception:
+                    pass
+                raise
+
+        # 2. Фоллбэк — старая логика с raw asyncio streams
         upstream_reader = None
         upstream_writer = None
         
         # Extract host and port from Upstream object
         upstream_host = upstream.host
         upstream_port = upstream.port
-        
+
+        # # 1. Получаем сессию из pool (keep-alive)
+        # session = None
+        # if self.connection_pool:
+        #     session = await self.connection_pool.get_session(upstream)
+
+        # try:
+        #     if session:
+        #         # Используем aiohttp с keep-alive
+        #         return await self._proxy_with_aiohttp(
+        #             request, upstream, session
+        #         )
+        #     else:
+        #         # Старая логика с raw asyncio streams
+        #         return await self._proxy_with_raw_streams(
+        #             request, upstream
+        #         )
+                
+        # finally:
+        #     # Сессия остается в pool для reuse
+        #     pass
         try:
             await logger.info(
                 'Connecting to upstream %s:%d for %s %s'
@@ -350,7 +438,60 @@ class ClientConnectionHandler:
                     await upstream_writer.wait_closed()
                 except Exception:
                     pass
-    
+
+    async def _proxy_with_aiohttp(self, request, upstream, session, keep_client_alive: bool):
+        """Проксирование через aiohttp с keep-alive."""
+        url = f"http://{upstream.host}:{upstream.port}{request.path}"
+        
+        # Подготавливаем заголовки
+        headers = dict(request.headers)
+        # Убираем Connection: close для keep-alive
+        if 'connection' in headers:
+            del headers['connection']
+        
+        # Подготавливаем тело
+        body = None
+        if request.method in ['POST', 'PUT', 'PATCH']:
+            # Читаем тело из stream
+            body_content = await request.read_body()
+            body = body_content if body_content else None
+        
+        # Отправляем запрос через aiohttp
+        async with session.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            data=body,
+            allow_redirects=False,
+        ) as resp:
+            
+            # Получаем статус
+            status = resp.status
+            
+        # Отправляем заголовки клиенту
+        response_headers = f"{request.version} {status} {resp.reason}\r\n"
+        for name, value in resp.headers.items():
+            if name.lower() != 'connection':  # Не пересылаем keep-alive заголовки
+                response_headers += f"{name}: {value}\r\n"
+
+        if keep_client_alive:
+            # Разрешаем клиенту переиспользовать соединение
+            response_headers += "Connection: keep-alive\r\n\r\n"
+        else:
+            response_headers += "Connection: close\r\n\r\n"
+            
+            self.writer.write(response_headers.encode())
+            await self.writer.drain()
+            
+            # Стримим тело ответа
+            total_bytes = len(response_headers.encode())
+            async for chunk in resp.content.iter_chunked(8192):
+                self.writer.write(chunk)
+                await self.writer.drain()
+                total_bytes += len(chunk)
+            
+            return status, total_bytes
+
     async def parse_request(self) -> Optional[HTTPRequest]:
         """
         Parse HTTP request: start line (method, path, version) + headers.

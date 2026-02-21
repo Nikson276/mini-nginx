@@ -18,8 +18,8 @@
 - ✅ Добавил pyroscope для сбора метрик cpu по компонентам
 - ✅ Логирование с trace_id и метрики: ручка `/metrics` на отдельном порту (Prometheus-формат)
 - ✅ Конфиг из файла (YAML, Pydantic). Горячая перезагрузка конфигурации (SIGHUP) без остановки сервера.
-- (В разработке) HTTP/1.1 keep‑alive пул к апстримам и к клиенту, повторное использование соединений.
-- (В разработке) Circuit Breaker (отключение проблемного апстрима на интервал).
+- ✅ HTTP/1.1 keep‑alive пул к апстримам (aiohttp) и keep‑alive к клиенту (многократные запросы по одному TCP).
+- ✅ Circuit Breaker (отключение проблемного апстрима на интервал).
 
 ## Что реализовано
 
@@ -378,14 +378,29 @@ limits:
   max_conns_per_upstream: 100
 logging:
   level: "info"
+connection_pool:
+  max_size: 50
+  max_connections_per_host: 25
+  idle_timeout: 15.0
+  connect_timeout: 2.0
+  read_timeout: 10.0
+circuit_breaker:
+  failure_threshold: 5
+  recovery_timeout: 10.0
+  half_open_max_requests: 1
+  timeout: 2.0
 ```
 
 **Горячая перезагрузка (SIGHUP):** после изменения конфига отправьте процессу сигнал SIGHUP — конфиг будет перечитан без остановки сервера. Новые соединения используют обновлённые параметры.
 
+Local
 ```bash
-kill -HUP $(cat proxy.pid)
-# или по имени процесса
-kill -HUP $(pgrep -f "python -m proxy.main")
+kill -HUP $(pgrep -f "proxy.main")
+```
+
+Docker
+```bash
+   docker compose kill -s HUP proxy
 ```
 
 ## [Test log and issuess](./tests/test_log_fix.md)

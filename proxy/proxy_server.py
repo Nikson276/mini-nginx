@@ -44,39 +44,53 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
             writer,
             timeout_policy=cfg.timeout_policy,
             limit_manager=cfg.connection_limits,
+            connection_pool=cfg.connection_pool,
+            circuit_breaker_manager=cfg.circuit_breaker_manager,
             trace_id=trace_id,
         )
 
         try:
-            request = await handler.parse_request()
-            if not request:
-                await metrics.record_parse_error()
-                await logger.warning('Failed to parse request from %s' % (address,))
-                return
+            had_any_request = False
 
-            start_time = await metrics.record_request_start()
-            await logger.info(
-                'Request: %s %s %s from %s'
-                % (request.method, request.path, request.version, address)
-            )
-            await logger.debug('Headers: %s' % (request.headers,))
+            while True:
+                request = await handler.parse_request()
+                if not request:
+                    # Если первый запрос не распарсился — считаем это ошибкой
+                    if not had_any_request:
+                        await metrics.record_parse_error()
+                        await logger.warning('Failed to parse request from %s' % (address,))
+                    break
 
-            upstream = await cfg.upstream_pool.get_next()
-            await logger.info(
-                'Selected upstream %s:%d for %s %s (round-robin)'
-                % (upstream.host, upstream.port, request.method, request.path)
-            )
-            
-            # 3. Proxy request to selected upstream
-            result = await handler.proxy_to_upstream(
-                request,
-                upstream=upstream,
-            )
-            if result is not None:
-                status, bytes_sent = result
-                await metrics.record_request_done(
-                    start_time, status, upstream.host, upstream.port, bytes_sent
+                had_any_request = True
+                keep_alive = handler.should_keep_alive(request)
+
+                start_time = await metrics.record_request_start()
+                await logger.info(
+                    'Request: %s %s %s from %s'
+                    % (request.method, request.path, request.version, address)
                 )
+                await logger.debug('Headers: %s' % (request.headers,))
+
+                upstream = await cfg.upstream_pool.get_next()
+                await logger.info(
+                    'Selected upstream %s:%d for %s %s (round-robin)'
+                    % (upstream.host, upstream.port, request.method, request.path)
+                )
+                
+                # 3. Proxy request to selected upstream
+                result = await handler.proxy_to_upstream(
+                    request,
+                    upstream=upstream,
+                )
+                if result is not None:
+                    status, bytes_sent = result
+                    await metrics.record_request_done(
+                        start_time, status, upstream.host, upstream.port, bytes_sent
+                    )
+
+                # Решаем, держать ли клиентское соединение открытым
+                if not keep_alive:
+                    break
 
         except asyncio.CancelledError:
             await logger.warning('Client connection cancelled: %s' % (address,))

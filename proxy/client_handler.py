@@ -456,7 +456,7 @@ class ClientConnectionHandler:
             body_content = await request.read_body()
             body = body_content if body_content else None
         
-        # Отправляем запрос через aiohttp
+        # Отправляем запрос через aiohttp (читаем тело ответа внутри контекста — снаружи resp уже закрыт)
         async with session.request(
             method=request.method,
             url=url,
@@ -464,33 +464,30 @@ class ClientConnectionHandler:
             data=body,
             allow_redirects=False,
         ) as resp:
-            
-            # Получаем статус
             status = resp.status
-            
-        # Отправляем заголовки клиенту
-        response_headers = f"{request.version} {status} {resp.reason}\r\n"
-        for name, value in resp.headers.items():
-            if name.lower() != 'connection':  # Не пересылаем keep-alive заголовки
-                response_headers += f"{name}: {value}\r\n"
+            reason = resp.reason
 
-        if keep_client_alive:
-            # Разрешаем клиенту переиспользовать соединение
-            response_headers += "Connection: keep-alive\r\n\r\n"
-        else:
-            response_headers += "Connection: close\r\n\r\n"
-            
+            # Формируем и отправляем заголовки клиенту
+            response_headers = f"{request.version} {status} {reason}\r\n"
+            for name, value in resp.headers.items():
+                if name.lower() != 'connection':
+                    response_headers += f"{name}: {value}\r\n"
+            if keep_client_alive:
+                response_headers += "Connection: keep-alive\r\n\r\n"
+            else:
+                response_headers += "Connection: close\r\n\r\n"
+
             self.writer.write(response_headers.encode())
             await self.writer.drain()
-            
-            # Стримим тело ответа
+
+            # Стримим тело ответа (обязательно внутри async with — иначе resp закрыт)
             total_bytes = len(response_headers.encode())
             async for chunk in resp.content.iter_chunked(8192):
                 self.writer.write(chunk)
                 await self.writer.drain()
                 total_bytes += len(chunk)
-            
-            return status, total_bytes
+
+        return status, total_bytes
 
     async def parse_request(self) -> Optional[HTTPRequest]:
         """

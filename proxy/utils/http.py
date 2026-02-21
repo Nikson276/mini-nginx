@@ -25,7 +25,66 @@ class HTTPRequest:
     
     def __repr__(self) -> str:
         return f"HTTPRequest(method={self.method!r}, path={self.path!r}, version={self.version!r})"
-    
+
+    def _has_body(self) -> bool:
+        """Return True if request has a body to read."""
+        content_length = self.headers.get('content-length')
+        transfer_encoding = self.headers.get('transfer-encoding')
+        if content_length:
+            try:
+                return int(content_length) > 0
+            except ValueError:
+                return False
+        if transfer_encoding and 'chunked' in transfer_encoding.lower():
+            return True
+        if self.method.upper() in ('POST', 'PUT', 'PATCH'):
+            return True
+        return False
+
+    async def read_body(self) -> bytes:
+        """
+        Read and return the full request body. Uses Content-Length or
+        Transfer-Encoding: chunked. Call only once per request (consumes reader).
+        """
+        if not self._has_body():
+            return b''
+        content_length = self.headers.get('content-length')
+        transfer_encoding = self.headers.get('transfer-encoding')
+        if content_length:
+            try:
+                n = int(content_length)
+                if n <= 0:
+                    return b''
+                return await self.reader.readexactly(n)
+            except ValueError:
+                return b''
+        if transfer_encoding and 'chunked' in transfer_encoding.lower():
+            return await self._read_chunked_body()
+        # POST/PUT/PATCH without Content-Length: no reliable length, return empty
+        return b''
+
+    async def _read_chunked_body(self) -> bytes:
+        """Read body with Transfer-Encoding: chunked."""
+        chunks: list[bytes] = []
+        while True:
+            line = await self.reader.readline()
+            if not line:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                size = int(line.split(b';')[0].strip(), 16)
+            except ValueError:
+                break
+            if size == 0:
+                break
+            chunks.append(await self.reader.readexactly(size))
+            trail = await self.reader.readexactly(2)  # \r\n
+            if trail != b'\r\n':
+                break
+        return b''.join(chunks)
+
     async def write_to_upstream(self, writer: StreamWriter) -> None:
         """
         Write HTTP request to upstream connection.

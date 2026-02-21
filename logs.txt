@@ -1,0 +1,38 @@
+host': '127.0.0.1:8080', 'user-agent': 'curl/8.18.0', 'accept': '*/*', 'content-type': 'text/plain', 'content-length': '12'} trace_id=f5e0e7e2-03f2-4c33-bb71-c4dcb9734632
+2026-02-21 17:07:07,616 - proxy - INFO - Selected upstream 127.0.0.1:9001 for POST /test (round-robin) trace_id=f5e0e7e2-03f2-4c33-bb71-c4dcb9734632
+2026-02-21 17:07:07,618 - proxy - DEBUG - Created new keep-alive session for 127.0.0.1:9001 trace_id=f5e0e7e2-03f2-4c33-bb71-c4dcb9734632
+2026-02-21 17:07:07,631 - proxy - INFO - Client disconnected: ('127.0.0.1', 40504) trace_id=f5e0e7e2-03f2-4c33-bb71-c4dcb9734632
+2026-02-21 17:07:11,514 - proxy - INFO - Client connected: ('127.0.0.1', 40812) trace_id=662c4495-685b-45f1-aabf-bfd16a901d37
+2026-02-21 17:07:11,515 - proxy - INFO - Request: GET / HTTP/1.1 from ('127.0.0.1', 40812) trace_id=662c4495-685b-45f1-aabf-bfd16a901d37
+2026-02-21 17:07:11,516 - proxy - DEBUG - Headers: {'host': '127.0.0.1:8080', 'user-agent': 'curl/8.18.0', 'accept': '*/*'} trace_id=662c4495-685b-45f1-aabf-bfd16a901d37
+2026-02-21 17:07:11,516 - proxy - INFO - Selected upstream 127.0.0.1:9002 for GET / (round-robin) trace_id=662c4495-685b-45f1-aabf-bfd16a901d37
+2026-02-21 17:07:11,517 - proxy - DEBUG - Created new keep-alive session for 127.0.0.1:9002 trace_id=662c4495-685b-45f1-aabf-bfd16a901d37
+2026-02-21 17:07:11,528 - proxy - INFO - Client disconnected: ('127.0.0.1', 40812) trace_id=662c4495-685b-45f1-aabf-bfd16a901d37
+2026-02-21 17:07:15,329 - proxy - INFO - Client connected: ('127.0.0.1', 40824) trace_id=0cae8d7f-3498-4031-9d8c-00b18e98b4da
+2026-02-21 17:07:15,331 - proxy - INFO - Request: POST /test HTTP/1.1 from ('127.0.0.1', 40824) trace_id=0cae8d7f-3498-4031-9d8c-00b18e98b4da
+2026-02-21 17:07:15,332 - proxy - DEBUG - Headers: {'host': '127.0.0.1:8080', 'user-agent': 'curl/8.18.0', 'accept': '*/*', 'content-type': 'text/plain', 'content-length': '12'} trace_id=0cae8d7f-3498-4031-9d8c-00b18e98b4da
+2026-02-21 17:07:15,332 - proxy - INFO - Selected upstream 127.0.0.1:9001 for POST /test (round-robin) trace_id=0cae8d7f-3498-4031-9d8c-00b18e98b4da
+2026-02-21 17:07:15,333 - proxy - DEBUG - Reusing keep-alive session for 127.0.0.1:9001, 
+active sessions in pool: 2 trace_id=0cae8d7f-3498-4031-9d8c-00b18e98b4da
+2026-02-21 17:07:15,345 - proxy - INFO - Client disconnected: ('127.0.0.1', 40824) trace_id=0cae8d7f-3498-4031-9d8c-00b18e98b4da
+2026-02-21 17:07:17,969 - proxy - INFO - Client connected: ('127.0.0.1', 40832) trace_id=6e46130d-3c76-4f30-81a7-5b7fb42ecbd4
+2026-02-21 17:07:17,971 - proxy - INFO - Request: GET / HTTP/1.1 from ('127.0.0.1', 40832) trace_id=6e46130d-3c76-4f30-81a7-5b7fb42ecbd4
+2026-02-21 17:07:17,972 - proxy - DEBUG - Headers: {'host': '127.0.0.1:8080', 'user-agent': 'curl/8.18.0', 'accept': '*/*'} trace_id=6e46130d-3c76-4f30-81a7-5b7fb42ecbd4
+2026-02-21 17:07:17,972 - proxy - INFO - Selected upstream 127.0.0.1:9002 for GET / (round-robin) trace_id=6e46130d-3c76-4f30-81a7-5b7fb42ecbd4
+2026-02-21 17:07:17,973 - proxy - DEBUG - Reusing keep-alive session for 127.0.0.1:9002, 
+active sessions in pool: 2 trace_id=6e46130d-3c76-4f30-81a7-5b7fb42ecbd4
+2026-02-21 17:07:17,984 - proxy - INFO - Client disconnected: ('127.0.0.1', 40832) trace_id=6e46130d-3c76-4f30-81a7-5b7fb42ecbd4
+2026-02-21 17:07:35,472 - proxy - INFO - Client connected: ('127.0.0.1', 50078) trace_id=1d11fce3-0334-4e7e-916f-83bb5457476c
+2026-02-21 17:07:35,474 - proxy - INFO - Request: POST /test HTTP/1.1 from ('127.0.0.1', 50078) trace_id=1d11fce3-0334-4e7e-916f-83bb5457476c
+2026-02-21 17:07:35,474 - proxy - DEBUG - Headers: {'host': '127.0.0.1:8080', 'user-agent': 'curl/8.18.0', 'accept': '*/*', 'content-type': 'text/plain', 'content-length': '12'} trace_id=1d11fce3-0334-4e7e-916f-83bb5457476c
+2026-02-21 17:07:35,475 - proxy - INFO - Selected upstream 127.0.0.1:9001 for POST /test (round-robin) trace_id=1d11fce3-0334-4e7e-916f-83bb5457476c
+2026-02-21 17:07:35,476 - proxy - DEBUG - Reusing keep-alive session for 127.0.0.1:9001, 
+active sessions in pool: 2 trace_id=1d11fce3-0334-4e7e-916f-83bb5457476c
+2026-02-21 17:07:35,487 - proxy - INFO - Client disconnected: ('127.0.0.1', 50078) trace_id=1d11fce3-0334-4e7e-916f-83bb5457476c
+2026-02-21 17:07:38,628 - proxy - INFO - Client connected: ('127.0.0.1', 50084) trace_id=142f948d-8882-4934-882c-80e0c5a76329
+2026-02-21 17:07:38,631 - proxy - INFO - Request: GET / HTTP/1.1 from ('127.0.0.1', 50084) trace_id=142f948d-8882-4934-882c-80e0c5a76329
+2026-02-21 17:07:38,632 - proxy - DEBUG - Headers: {'host': '127.0.0.1:8080', 'user-agent': 'curl/8.18.0', 'accept': '*/*'} trace_id=142f948d-8882-4934-882c-80e0c5a76329
+2026-02-21 17:07:38,632 - proxy - INFO - Selected upstream 127.0.0.1:9002 for GET / (round-robin) trace_id=142f948d-8882-4934-882c-80e0c5a76329
+2026-02-21 17:07:38,633 - proxy - DEBUG - Reusing keep-alive session for 127.0.0.1:9002, 
+active sessions in pool: 2 trace_id=142f948d-8882-4934-882c-80e0c5a76329
+2026-02-21 17:07:38,645 - proxy - INFO - Client disconnected: ('127.0.0.1', 50084) trace_id=142f948d-8882-4934-882c-80e0c5a76329

@@ -5,10 +5,11 @@ listen: "0.0.0.0:8080"
 metrics_listen: "0.0.0.0:8081"
 
 upstreams:
-  - host: "upstream1"
+  - host: "127.0.0.1"
     port: 9001
-  - host: "upstream2"
+  - host: "127.0.0.1"
     port: 9002
+
 
 timeouts:
   connect_ms: 1000
@@ -22,3 +23,16 @@ limits:
 
 logging:
   level: "debug"
+
+connection_pool:
+  max_size: 50
+  max_connections_per_host: 25
+  idle_timeout: 15.0
+  connect_timeout: 2.0
+  read_timeout: 10.0
+
+circuit_breaker:
+  failure_threshold: 5
+  recovery_timeout: 10.0
+  half_open_max_requests: 1
+  timeout: 2.0

@@ -393,10 +393,14 @@ circuit_breaker:
 
 **Горячая перезагрузка (SIGHUP):** после изменения конфига отправьте процессу сигнал SIGHUP — конфиг будет перечитан без остановки сервера. Новые соединения используют обновлённые параметры.
 
+Local
 ```bash
-kill -HUP $(cat proxy.pid)
-# или по имени процесса
-kill -HUP $(pgrep -f "python -m proxy.main")
+kill -HUP $(pgrep -f "proxy.main")
+```
+
+Docker
+```bash
+   docker compose kill -s HUP proxy
 ```
 
 ## [Test log and issuess](./tests/test_log_fix.md)

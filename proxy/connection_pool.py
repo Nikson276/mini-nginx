@@ -57,7 +57,13 @@ class ConnectionPool:
                 )
                 
                 await logger.debug(f"Created new keep-alive session for {key}")
-            
+                
+            else:
+                await logger.debug(
+                    f"Reusing keep-alive session for {key}, \n"
+                    f"active sessions in pool: {len(self._pools)}"
+                )
+
             return self._pools[key]
     
     async def close_all(self):

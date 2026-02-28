@@ -7,10 +7,11 @@ export const options = {
     http_reqs: ['count>=10000']
   },
   stages: [
-    { duration: '30s', target: 100 },  // Базовый уровень
-    { duration: '1m', target: 300 },   // Нормальная нагрузка
-    { duration: '1m', target: 500 },   // Пиковая нагрузка
-    { duration: '30s', target: 100 },  // Восстановление
+    { duration: '1m', target: 300 },
+    { duration: '1m', target: 1200 },  // Резкий пик
+    { duration: '1m', target: 300 },
+    { duration: '1m', target: 1500 },  // Еще выше
+    { duration: '2m', target: 300 },
   ],
 }
 
@@ -24,7 +25,7 @@ export default function () {
 
   // Post played track message
   response = http.post(
-    'http://proxy:8080/events/',
+    'http://127.0.0.1:8080/events/',
     JSON.stringify(event),
     { headers: { 'Content-Type': 'application/json' } }
   )

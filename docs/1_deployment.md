@@ -70,6 +70,8 @@ CONFIG_PATH=/path/to/config.yaml python3 -m proxy.main
 
 При отсутствии `config.yaml` (и `CONFIG_PATH`) параметры берутся из переменных окружения. Для round-robin поднимите два upstream вручную (см. раздел «Тестирование»).
 
+Для нагрузочных тестов с целевым RPS 1000 и выше может потребоваться поднять лимит открытых файлов: `ulimit -n 8192` перед запуском прокси. Подробнее см. [load_scenarios.md](tests/load_scenarios.md) (раздел про ulimit).
+
 ## Тестирование
 
 ### [Нагрузочные тесты](./tests/load_scenarios.md)
@@ -141,10 +143,13 @@ uvicorn tests.echo_app:app --host 127.0.0.1 --port 9002
 
 ```bash
 # В одном терминале запустить upstream
-cd tests
-uvicorn echo_app:app --host 127.0.0.1 --port 9001 --workers 1
+uvicorn tests.echo_app:app --host 127.0.0.1 --port 9001 --workers 1 --reload
 # Второй
-uvicorn echo_app:app --host 127.0.0.1 --port 9002 --workers 1
+uvicorn tests.echo_app:app --host 127.0.0.1 --port 9002 --workers 1 --reload
+
+# Для нагрузочного теста (500+ RPS) лучше поднять воркеры, иначе упираетесь в ~100 RPS:
+# uvicorn tests.echo_app:app --host 127.0.0.1 --port 9001 --workers 4
+# uvicorn tests.echo_app:app --host 127.0.0.1 --port 9002 --workers 4
 
 # Или  простой HTTP сервер
 python3 -m http.server 9001

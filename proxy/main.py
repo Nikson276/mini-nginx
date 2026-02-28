@@ -6,6 +6,11 @@ import signal
 import sys
 from pathlib import Path
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 import pyroscope
 
 from proxy.logger import setup_aiologger, get_logger, set_logging_level
@@ -34,6 +39,30 @@ def init_pyroscope():
         print("Pyroscope initialized successfully!")
     except Exception as e:
         print(f"Pyroscope init error: {e}")
+
+
+def _check_ulimit(cfg) -> None:
+    """Warn if process ulimit (nofile) may be too low for configured connection limits."""
+    if resource is None:
+        return
+    try:
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (ValueError, OSError):
+        return
+    # Приблизительно: клиенты + апстримы + запас (служебные сокеты, метрики и т.д.)
+    needed = (
+        cfg.model.limits.max_client_conns
+        + len(cfg.model.upstreams) * cfg.model.connection_pool.max_connections_per_host
+        + 100
+    )
+    if soft < needed:
+        print(
+            "WARNING: ulimit nofile (%d) may be too low for config (need ~%d). "
+            "Raise with: ulimit -n 8192, or systemd LimitNOFILE=8192. "
+            "Otherwise you may see 'Too many open files' and 'Invalid file descriptor -1'."
+            % (soft, needed),
+            file=sys.stderr,
+        )
 
 
 def _config_path() -> Path:
@@ -93,6 +122,7 @@ if __name__ == "__main__":
         print("Config not available", file=sys.stderr)
         sys.exit(1)
 
+    _check_ulimit(cfg)
     init_pyroscope()
 
     host = cfg.model.listen_host

@@ -24,6 +24,11 @@ services:
     depends_on:
       - upstream1
       - upstream2
+    # Для нагрузочных тестов 1000+ RPS нужен высокий лимит открытых файлов (см. docs/tests/load_scenarios.md)
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     networks:
       - app
     # Healthcheck: реальный HTTP-запрос, чтобы не было WARNING "Failed to parse request"

@@ -8,7 +8,7 @@ from proxy.utils.http import HTTPRequest
 from proxy.timeouts import TimeoutPolicy, DEFAULT_TIMEOUT_POLICY
 from proxy.limits import ConnectionLimitManager
 from proxy.connection_pool import ConnectionPool
-from proxy.circuit_breaker import CircuitBreakerManager, CircuitOpenError
+from proxy.circuit_breaker import CircuitBreakerManager, CircuitOpenError, ClientDisconnectError
 from proxy import metrics
 from proxy.logger import get_logger
 
@@ -477,15 +477,17 @@ class ClientConnectionHandler:
             else:
                 response_headers += "Connection: close\r\n\r\n"
 
-            self.writer.write(response_headers.encode())
-            await self.writer.drain()
-
-            # Стримим тело ответа (обязательно внутри async with — иначе resp закрыт)
-            total_bytes = len(response_headers.encode())
-            async for chunk in resp.content.iter_chunked(8192):
-                self.writer.write(chunk)
+            try:
+                self.writer.write(response_headers.encode())
                 await self.writer.drain()
-                total_bytes += len(chunk)
+                total_bytes = len(response_headers.encode())
+                async for chunk in resp.content.iter_chunked(8192):
+                    self.writer.write(chunk)
+                    await self.writer.drain()
+                    total_bytes += len(chunk)
+            except (ConnectionResetError, BrokenPipeError, ConnectionError) as e:
+                # Клиент уже отключился (таймаут k6 и т.д.) — не считаем сбоем upstream в CB
+                raise ClientDisconnectError("Client disconnected") from e
 
         return status, total_bytes
 

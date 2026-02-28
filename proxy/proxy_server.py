@@ -4,6 +4,7 @@ import uuid
 from asyncio.streams import StreamReader, StreamWriter
 
 from proxy.client_handler import ClientConnectionHandler
+from proxy.circuit_breaker import ClientDisconnectError
 from proxy.upstream_pool import Upstream
 from proxy.logger import get_logger, trace_id_ctx
 from proxy import metrics
@@ -96,6 +97,9 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
             await logger.warning('Client connection cancelled: %s' % (address,))
             raise
 
+        except ClientDisconnectError:
+            await logger.debug('Client disconnected before response sent: %s' % (address,))
+
         except Exception as e:
             await logger.error('Error handling client %s: %s' % (address, e), exc_info=True)
 
@@ -110,14 +114,16 @@ async def client_connected(reader: StreamReader, writer: StreamWriter):
 
 
 async def main(host: str, port: int):
+    # backlog умеренный: при 65535 при нехватке FDs ядро накапливает соединения в очереди,
+    # затем accept() даёт EMFILE и возможен Invalid file descriptor -1. 4096 — разумный компромисс.
     srv = await asyncio.start_server(
         client_connected,
         host,
         port,
         reuse_address=True,
         reuse_port=True,
-        limit=256*1024,      # 256KB вместо 64KB
-        backlog=65535
+        limit=256 * 1024,
+        backlog=4096,
     )
 
     async with srv:

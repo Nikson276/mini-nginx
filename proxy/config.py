@@ -63,6 +63,8 @@ class CircuitBreakerConfigModel(BaseModel):
     failure_threshold: int = 5
     recovery_timeout: float = 10.0
     half_open_max_requests: int = 1
+    half_open_max_failures: int = 1
+    half_open_timeout_multiplier: float = 1.0
     timeout: float = 2.0
 
 
@@ -155,6 +157,8 @@ class ConfigHolder:
                 failure_threshold=model.circuit_breaker.failure_threshold,
                 recovery_timeout=model.circuit_breaker.recovery_timeout,
                 half_open_max_requests=model.circuit_breaker.half_open_max_requests,
+                half_open_max_failures=model.circuit_breaker.half_open_max_failures,
+                half_open_timeout_multiplier=model.circuit_breaker.half_open_timeout_multiplier,
                 timeout=model.circuit_breaker.timeout,
             )
         )

@@ -16,10 +16,12 @@ class CircuitState(Enum):
 
 @dataclass
 class CircuitBreakerConfig:
-    failure_threshold: int = 5        # 5 ошибок → открыть circuit
-    recovery_timeout: float = 10.0    # Ждать 10 секунд перед half-open
-    half_open_max_requests: int = 1   # Только 1 запрос в half-open состоянии
-    timeout: float = 2.0              # Таймаут для каждого запроса
+    failure_threshold: int = 5        # Сколько ошибок подряд → открыть circuit
+    recovery_timeout: float = 10.0   # Секунд ждать перед попыткой half-open
+    half_open_max_requests: int = 1   # Макс. запросов в half-open (пробные)
+    half_open_max_failures: int = 1   # Сколько ошибок в half-open допустить перед повторным OPEN
+    half_open_timeout_multiplier: float = 1.0  # В half-open таймаут = timeout * это (1.5 = дать пробе больше времени)
+    timeout: float = 2.0              # Таймаут запроса (должен быть >= timeouts.total_ms в конфиге)
 
 
 class CircuitBreaker:
@@ -32,10 +34,17 @@ class CircuitBreaker:
         self.failure_count = 0
         self.last_failure_time: Optional[float] = None
         self.half_open_requests = 0
+        self.half_open_failures = 0
         self._lock = asyncio.Lock()
     
     async def execute(self, coro: Callable, *args, **kwargs) -> Any:
         """Выполнить операцию с защитой circuit breaker."""
+        current_time = time.time()
+        
+        # Логируем состояние при каждом вызове
+        await logger.debug(f"Circuit {self.name} state: {self.state}, "
+                        f"failures: {self.failure_count}, last_failure: {self.last_failure_time}")
+        
         # Проверяем состояние circuit
         if self.state == CircuitState.OPEN:
             # Проверяем, не пора ли перейти в half-open
@@ -45,6 +54,7 @@ class CircuitBreaker:
                     if self.state == CircuitState.OPEN:
                         self.state = CircuitState.HALF_OPEN
                         self.half_open_requests = 0
+                        self.half_open_failures = 0
                         await logger.info(f"Circuit {self.name} переход в HALF_OPEN")
             else:
                 raise CircuitOpenError(f"Circuit {self.name} is OPEN")
@@ -55,9 +65,14 @@ class CircuitBreaker:
                     raise CircuitOpenError(f"Circuit {self.name} is HALF_OPEN, max requests reached")
                 self.half_open_requests += 1
         
+        # В half-open даём пробному запросу больше времени (под нагрузкой он может идти дольше)
+        effective_timeout = self.config.timeout
+        if self.state == CircuitState.HALF_OPEN:
+            effective_timeout = self.config.timeout * self.config.half_open_timeout_multiplier
+
         # Выполняем запрос с таймаутом
         try:
-            result = await asyncio.wait_for(coro(*args, **kwargs), timeout=self.config.timeout)
+            result = await asyncio.wait_for(coro(*args, **kwargs), timeout=effective_timeout)
             
             # Успех - сбрасываем счетчики
             async with self._lock:
@@ -66,6 +81,7 @@ class CircuitBreaker:
                     self.state = CircuitState.CLOSED
                     self.failure_count = 0
                     self.half_open_requests = 0
+                    self.half_open_failures = 0
                     await logger.info(f"Circuit {self.name} переход в CLOSED (успешный запрос)")
                 else:
                     self.failure_count = 0
@@ -73,7 +89,10 @@ class CircuitBreaker:
             return result
             
         except asyncio.TimeoutError:
-            await self._record_failure(f"Timeout after {self.config.timeout}s")
+            await self._record_failure(f"Timeout after {effective_timeout}s")
+            raise
+        except ClientDisconnectError:
+            # Клиент отключился (таймаут k6 и т.п.) — не считаем сбоем upstream
             raise
         except Exception as e:
             await self._record_failure(str(e))
@@ -91,10 +110,20 @@ class CircuitBreaker:
             )
             
             if self.state == CircuitState.HALF_OPEN:
-                # Ошибка в half-open -> снова открываем
-                self.state = CircuitState.OPEN
-                self.half_open_requests = 0
-                await logger.error(f"Circuit {self.name} переход в OPEN (ошибка в half-open)")
+                self.half_open_failures += 1
+                if self.half_open_failures >= self.config.half_open_max_failures:
+                    self.state = CircuitState.OPEN
+                    self.half_open_requests = 0
+                    self.half_open_failures = 0
+                    await logger.error(
+                        f"Circuit {self.name} переход в OPEN "
+                        f"(ошибка в half-open: {self.half_open_failures} сбоев)"
+                    )
+                else:
+                    await logger.warning(
+                        f"Circuit {self.name} half-open сбой {self.half_open_failures}/"
+                        f"{self.config.half_open_max_failures}, пробуем ещё"
+                    )
             
             elif (self.state == CircuitState.CLOSED and 
                   self.failure_count >= self.config.failure_threshold):
@@ -124,4 +153,9 @@ class CircuitBreakerManager:
 
 class CircuitOpenError(Exception):
     """Исключение когда circuit breaker открыт."""
+    pass
+
+
+class ClientDisconnectError(Exception):
+    """Клиент разорвал соединение (таймаут, закрытие). Не считается сбоем upstream для CB."""
     pass

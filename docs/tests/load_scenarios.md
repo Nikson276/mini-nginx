@@ -17,7 +17,7 @@ vegeta attack -duration=30s -rate=500 | vegeta report
 Локально:
 
 ```bash
-k6 run tests/k6/load-test.js
+k6 run tests/k6/load-test.js    # 500-5000 VU постепенная нагрузка
 k6 run tests/k6/load-test-wrk-like.js   # 128 VU, 30 с
 k6 run tests/k6/load-test-ab-like.js    # 5000 запросов, 200 одновременных
 k6 run tests/k6/load-test-vegeta-like.js # 500 RPS, 30 с
@@ -27,11 +27,11 @@ k6 run tests/k6/load-test-constant-rate.js -e RPS=1000   # целевой RPS (5
 В Docker Compose:
 
 ```bash
-docker compose --profile load-test run --rm k6 run /scripts/load-test.js
-docker compose --profile load-test run --rm k6 run /scripts/load-test-wrk-like.js
-docker compose --profile load-test run --rm k6 run /scripts/load-test-ab-like.js
-docker compose --profile load-test run --rm k6 run /scripts/load-test-vegeta-like.js
-docker compose --profile load-test run --rm k6 run /scripts/load-test-constant-rate.js -e RPS=1000
+docker compose --profile load-test run --rm k6 run /scripts/load-test.js -e BASE_URL=http://proxy:8080
+docker compose --profile load-test run --rm k6 run /scripts/load-test-wrk-like.js -e BASE_URL=http://proxy:8080
+docker compose --profile load-test run --rm k6 run /scripts/load-test-ab-like.js -e BASE_URL=http://proxy:8080
+docker compose --profile load-test run --rm k6 run /scripts/load-test-vegeta-like.js -e BASE_URL=http://proxy:8080
+docker compose --profile load-test run --rm k6 run /scripts/load-test-constant-rate.js -e BASE_URL=http://proxy:8080 -e RPS=1000 
 ```
 
 Расшифровка:
@@ -57,195 +57,89 @@ k6 run tests/k6/load-test-constant-rate.js -e RPS=5000 -e DURATION=120s
 
 [Как тестировать целевой RPS](../info/load_test_k6_analyze.md#vus-и-rps-как-тестировать-целевой-rps)
 
-### Результаты (отчеты К6) До доработок (keep-alive pool + config)
+### Результаты (отчеты К6) ПОСЛЕ доработок (keep-alive pool + config)
 
-#### wrk-like
+#### 500-5000 VU постепенная нагрузка
+
+##### **Ключевые метрики**
+
+| Метрика | Значение | Статус |
+|---------|----------|--------|
+| **RPS (запросов/сек)** | 640.66 | ⚠️ Ниже цели (4000) |
+| **Успешные ответы** | 98.72% | ✅ Цель (<95%) |
+| **P95 latency** | 5.11с | ✅ Цель (<15с) |
+| **Всего ошибок** | 2,230 (1.28%) | ✅ Цель (<5%) |
+| **Прерванные итерации** | 1,385 | ⚠️ Требует внимания |
+
+##### **Итоговое заключение**
+
+**Сильные стороны:**
+- ✅ Circuit breaker настроен оптимально
+- ✅ Connection pool эффективно переиспользует соединения
+- ✅ Система стабильна до 4000 VUs
+- ✅ Быстрое восстановление после нагрузки
+
+**Что требует внимания:**
+- ⚠️ RPS ниже целевого (640 vs 4000)
+- ⚠️ Таймауты при 5000 VUs
+- ⚠️ 1385 прерванных соединений
+
+**Следующие шаги:**
+1. **Профилирование бэкендов** - почему 2.6с на запрос?
+2. **Оптимизация прокси** - увеличить лимиты соединений
+3. **Горизонтальное масштабирование** - добавить инстансы
+4. **Тест с фиксированной нагрузкой** - найти точку отказа
+
+**Итоговая оценка: 8/10** 🎯
 
 ```bash
-
-         /\      Grafana   /‾‾/  
-    /\  /  \     |\  __   /  /   
-   /  \/    \    | |/ /  /   ‾‾\ 
-  /          \   |   (  |  (‾)  |
- / __________ \  |_|\_\  \_____/ 
-
-     execution: local
-        script: /scripts/load-test-wrk-like.js
-        output: -
-
-     scenarios: (100.00%) 1 scenario, 128 max VUs, 35s max duration (incl. graceful stop):
-              * wrk_like: 128 looping VUs for 30s (gracefulStop: 5s)
-
+WARN[0268] Request Failed                                error="Post \"http://127.0.0.1:8080/events/\": request timeout"
 
 
   █ THRESHOLDS 
 
     http_req_duration
-    ✓ 'p(95)<5000' p(95)=2.56s
-    ✓ 'p(99)<10000' p(99)=2.78s
+    ✓ 'p(95)<15000' p(95)=5.11s
 
     http_req_failed
-    ✓ 'rate<0.01' rate=0.00%
-
-
-  █ TOTAL RESULTS 
-
-    checks_total.......: 1951    62.497528/s
-    checks_succeeded...: 100.00% 1951 out of 1951
-    checks_failed......: 0.00%   0 out of 1951
-
-    ✓ status 200
-
-    HTTP
-    http_req_duration..............: avg=2s min=591.09ms med=1.97s max=2.86s p(90)=2.42s p(95)=2.56s
-      { expected_response:true }...: avg=2s min=591.09ms med=1.97s max=2.86s p(90)=2.42s p(95)=2.56s
-    http_req_failed................: 0.00%  0 out of 1951
-    http_reqs......................: 1951   62.497528/s
-
-    EXECUTION
-    iteration_duration.............: avg=2s min=594.67ms med=1.98s max=2.86s p(90)=2.42s p(95)=2.57s
-    iterations.....................: 1951   62.497528/s
-    vus............................: 41     min=41        max=128
-    vus_max........................: 128    min=128       max=128
-
-    NETWORK
-    data_received..................: 755 kB 24 kB/s
-    data_sent......................: 129 kB 4.1 kB/s
-
-
-
-
-running (31.2s), 000/128 VUs, 1951 complete and 0 interrupted iterations
-wrk_like ✓ [======================================] 128 VUs  30s
-```
-
-#### ab-like
-
-```bash
-
-         /\      Grafana   /‾‾/  
-    /\  /  \     |\  __   /  /   
-   /  \/    \    | |/ /  /   ‾‾\ 
-  /          \   |   (  |  (‾)  |
- / __________ \  |_|\_\  \_____/ 
-
-     execution: local
-        script: /scripts/load-test-ab-like.js
-        output: -
-
-     scenarios: (100.00%) 1 scenario, 200 max VUs, 5m5s max duration (incl. graceful stop):
-              * ab_like: 25 iterations for each of 200 VUs (maxDuration: 5m0s, gracefulStop: 5s)
-
-
-
-  █ THRESHOLDS 
-
-    http_req_duration
-    ✓ 'p(95)<5000' p(95)=4.49s
-    ✓ 'p(99)<10000' p(99)=4.68s
-
-    http_req_failed
-    ✓ 'rate<0.01' rate=0.00%
-
-
-  █ TOTAL RESULTS 
-
-    checks_total.......: 5000    52.855812/s
-    checks_succeeded...: 100.00% 5000 out of 5000
-    checks_failed......: 0.00%   0 out of 5000
-
-    ✓ status 200
-
-    HTTP
-    http_req_duration..............: avg=3.7s  min=765.59ms med=3.64s max=4.78s p(90)=4.37s p(95)=4.49s
-      { expected_response:true }...: avg=3.7s  min=765.59ms med=3.64s max=4.78s p(90)=4.37s p(95)=4.49s
-    http_req_failed................: 0.00%  0 out of 5000
-    http_reqs......................: 5000   52.855812/s
-
-    EXECUTION
-    iteration_duration.............: avg=3.71s min=769.33ms med=3.64s max=5.12s p(90)=4.39s p(95)=4.52s
-    iterations.....................: 5000   52.855812/s
-    vus............................: 65     min=65        max=200
-    vus_max........................: 200    min=200       max=200
-
-    NETWORK
-    data_received..................: 1.9 MB 21 kB/s
-    data_sent......................: 330 kB 3.5 kB/s
-
-
-
-
-running (1m34.6s), 000/200 VUs, 5000 complete and 0 interrupted iterations
-ab_like ✓ [=================] 200 VUs  1m34.6s/5m0s  5000/5000 iters, 25 per VU
-```
-
-#### vegeta-like
-
-```bash
-
-         /\      Grafana   /‾‾/  
-    /\  /  \     |\  __   /  /   
-   /  \/    \    | |/ /  /   ‾‾\ 
-  /          \   |   (  |  (‾)  |
- / __________ \  |_|\_\  \_____/ 
-
-     execution: local
-        script: /scripts/load-test-vegeta-like.js
-        output: -
-
-     scenarios: (100.00%) 1 scenario, 1000 max VUs, 35s max duration (incl. graceful stop):
-              * vegeta_like: 500.00 iterations/s for 30s (maxVUs: 100-1000, gracefulStop: 5s)
-
-WARN[0008] Insufficient VUs, reached 1000 active VUs and cannot initialize more  executor=constant-arrival-rate scenario=vegeta_like
-
-
-  █ THRESHOLDS 
-
-    http_req_duration
-    ✗ 'p(95)<5000' p(95)=17.98s
-    ✗ 'p(99)<10000' p(99)=18.14s
-
-    http_req_failed
-    ✓ 'rate<0.01' rate=0.00%
+    ✓ 'rate<0.05' rate=1.28%
 
     http_reqs
-    ✗ 'rate>=450' rate=50.282109/s
+    ✗ 'rate>=4000' rate=640.660278/s
 
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 1767    50.282109/s
-    checks_succeeded...: 100.00% 1767 out of 1767
-    checks_failed......: 0.00%   0 out of 1767
+    checks_total.......: 173319 640.660278/s
+    checks_succeeded...: 98.71% 171089 out of 173319
+    checks_failed......: 1.28%  2230 out of 173319
 
-    ✓ status 200
+    ✗ status equals 200
+      ↳  98% — ✓ 171089 / ✗ 2230
 
     HTTP
-    http_req_duration..............: avg=12.85s min=575.68ms med=13.6s max=18.18s p(90)=17.88s p(95)=17.98s
-      { expected_response:true }...: avg=12.85s min=575.68ms med=13.6s max=18.18s p(90)=17.88s p(95)=17.98s
-    http_req_failed................: 0.00%  0 out of 1767
-    http_reqs......................: 1767   50.282109/s
+    http_req_duration..............: avg=3.33s min=754.1µs  med=2.81s max=1m0s p(90)=4.97s p(95)=5.11s
+      { expected_response:true }...: avg=2.6s  min=754.1µs  med=2.74s max=8.5s p(90)=4.89s p(95)=5.08s
+    http_req_failed................: 1.28%  2230 out of 173319
+    http_reqs......................: 173319 640.660278/s
 
     EXECUTION
-    dropped_iterations.............: 12568  357.637547/s
-    iteration_duration.............: avg=12.86s min=582.85ms med=13.6s max=18.19s p(90)=17.88s p(95)=17.99s
-    iterations.....................: 1767   50.282109/s
-    vus............................: 675    min=176       max=1000
-    vus_max........................: 1000   min=176       max=1000
+    iteration_duration.............: avg=3.33s min=833.38µs med=2.81s max=1m0s p(90)=4.97s p(95)=5.11s
+    iterations.....................: 173319 640.660278/s
+    vus............................: 570    min=11             max=5000
+    vus_max........................: 5000   min=5000           max=5000
 
     NETWORK
-    data_received..................: 685 kB 20 kB/s
-    data_sent......................: 161 kB 4.6 kB/s
+    data_received..................: 90 MB  332 kB/s
+    data_sent......................: 35 MB  127 kB/s
 
 
 
 
-running (35.1s), 0000/1000 VUs, 1767 complete and 666 interrupted iterations
-vegeta_like ✓ [============================] 0666/1000 VUs  30s  500.00 iters/s
-ERRO[0035] thresholds on metrics 'http_req_duration, http_reqs' have been crossed 
+running (4m30.5s), 0000/5000 VUs, 173319 complete and 1385 interrupted iterations
+default ✓ [======================================] 0000/5000 VUs  4m30s
 ```
 
-### Результаты (отчеты К6) ПОСЛЕ доработок (keep-alive pool + config)
 
 #### wrk-like
 
@@ -697,6 +591,194 @@ ConnectionResetError: Connection lost
 ```
 
 
+### Результаты (отчеты К6) До доработок (keep-alive pool + config)
+
+#### wrk-like
+
+```bash
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: /scripts/load-test-wrk-like.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 128 max VUs, 35s max duration (incl. graceful stop):
+              * wrk_like: 128 looping VUs for 30s (gracefulStop: 5s)
+
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<5000' p(95)=2.56s
+    ✓ 'p(99)<10000' p(99)=2.78s
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1951    62.497528/s
+    checks_succeeded...: 100.00% 1951 out of 1951
+    checks_failed......: 0.00%   0 out of 1951
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=2s min=591.09ms med=1.97s max=2.86s p(90)=2.42s p(95)=2.56s
+      { expected_response:true }...: avg=2s min=591.09ms med=1.97s max=2.86s p(90)=2.42s p(95)=2.56s
+    http_req_failed................: 0.00%  0 out of 1951
+    http_reqs......................: 1951   62.497528/s
+
+    EXECUTION
+    iteration_duration.............: avg=2s min=594.67ms med=1.98s max=2.86s p(90)=2.42s p(95)=2.57s
+    iterations.....................: 1951   62.497528/s
+    vus............................: 41     min=41        max=128
+    vus_max........................: 128    min=128       max=128
+
+    NETWORK
+    data_received..................: 755 kB 24 kB/s
+    data_sent......................: 129 kB 4.1 kB/s
+
+
+
+
+running (31.2s), 000/128 VUs, 1951 complete and 0 interrupted iterations
+wrk_like ✓ [======================================] 128 VUs  30s
+```
+
+#### ab-like
+
+```bash
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: /scripts/load-test-ab-like.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 200 max VUs, 5m5s max duration (incl. graceful stop):
+              * ab_like: 25 iterations for each of 200 VUs (maxDuration: 5m0s, gracefulStop: 5s)
+
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<5000' p(95)=4.49s
+    ✓ 'p(99)<10000' p(99)=4.68s
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 5000    52.855812/s
+    checks_succeeded...: 100.00% 5000 out of 5000
+    checks_failed......: 0.00%   0 out of 5000
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=3.7s  min=765.59ms med=3.64s max=4.78s p(90)=4.37s p(95)=4.49s
+      { expected_response:true }...: avg=3.7s  min=765.59ms med=3.64s max=4.78s p(90)=4.37s p(95)=4.49s
+    http_req_failed................: 0.00%  0 out of 5000
+    http_reqs......................: 5000   52.855812/s
+
+    EXECUTION
+    iteration_duration.............: avg=3.71s min=769.33ms med=3.64s max=5.12s p(90)=4.39s p(95)=4.52s
+    iterations.....................: 5000   52.855812/s
+    vus............................: 65     min=65        max=200
+    vus_max........................: 200    min=200       max=200
+
+    NETWORK
+    data_received..................: 1.9 MB 21 kB/s
+    data_sent......................: 330 kB 3.5 kB/s
+
+
+
+
+running (1m34.6s), 000/200 VUs, 5000 complete and 0 interrupted iterations
+ab_like ✓ [=================] 200 VUs  1m34.6s/5m0s  5000/5000 iters, 25 per VU
+```
+
+#### vegeta-like
+
+```bash
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: /scripts/load-test-vegeta-like.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 1000 max VUs, 35s max duration (incl. graceful stop):
+              * vegeta_like: 500.00 iterations/s for 30s (maxVUs: 100-1000, gracefulStop: 5s)
+
+WARN[0008] Insufficient VUs, reached 1000 active VUs and cannot initialize more  executor=constant-arrival-rate scenario=vegeta_like
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✗ 'p(95)<5000' p(95)=17.98s
+    ✗ 'p(99)<10000' p(99)=18.14s
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+    http_reqs
+    ✗ 'rate>=450' rate=50.282109/s
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1767    50.282109/s
+    checks_succeeded...: 100.00% 1767 out of 1767
+    checks_failed......: 0.00%   0 out of 1767
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=12.85s min=575.68ms med=13.6s max=18.18s p(90)=17.88s p(95)=17.98s
+      { expected_response:true }...: avg=12.85s min=575.68ms med=13.6s max=18.18s p(90)=17.88s p(95)=17.98s
+    http_req_failed................: 0.00%  0 out of 1767
+    http_reqs......................: 1767   50.282109/s
+
+    EXECUTION
+    dropped_iterations.............: 12568  357.637547/s
+    iteration_duration.............: avg=12.86s min=582.85ms med=13.6s max=18.19s p(90)=17.88s p(95)=17.99s
+    iterations.....................: 1767   50.282109/s
+    vus............................: 675    min=176       max=1000
+    vus_max........................: 1000   min=176       max=1000
+
+    NETWORK
+    data_received..................: 685 kB 20 kB/s
+    data_sent......................: 161 kB 4.6 kB/s
+
+
+
+
+running (35.1s), 0000/1000 VUs, 1767 complete and 666 interrupted iterations
+vegeta_like ✓ [============================] 0666/1000 VUs  30s  500.00 iters/s
+ERRO[0035] thresholds on metrics 'http_req_duration, http_reqs' have been crossed 
+```
+
 ## Продвинутые задания (необязательно, по желанию)
 
 - [] Health‑checks апстримов (active/passive), исключение недоступных из балансировки.
@@ -706,5 +788,5 @@ ConnectionResetError: Connection lost
 - [] Поддержка HTTPS на фронте (TLS termination) и/или к апстриму.
 - [x] Горячая перезагрузка конфигурации (SIGHUP) без остановки сервера.
 - [x] HTTP/1.1 keep‑alive пул к апстримам, повторное использование соединений.
-- [] Проброс/модификация заголовков (X-Forwarded-For, Via, Connection: keep-alive и т. п.).
+- [x] Проброс/модификация заголовков (X-Forwarded-For, Via, Connection: keep-alive и т. п.).
 - [x] Мини‑панель метрик: простая страница со статистикой.

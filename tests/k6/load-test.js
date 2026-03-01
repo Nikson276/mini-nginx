@@ -2,16 +2,22 @@
 import { sleep, check } from 'k6'
 import http from 'k6/http'
 
+const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8080'
+
 export const options = {
   thresholds: {
-    http_reqs: ['count>=10000']
+    http_req_failed: ['rate<0.05'],
+    http_req_duration: ['p(95)<15000'],
+    http_reqs: ['rate>=4000'],
   },
   stages: [
-    { duration: '1m', target: 300 },
-    { duration: '1m', target: 1200 },  // Резкий пик
-    { duration: '1m', target: 300 },
-    { duration: '1m', target: 1500 },  // Еще выше
-    { duration: '2m', target: 300 },
+    { duration: '30s', target: 500 },
+    { duration: '1m', target: 1000 },
+    { duration: '30s', target: 2000 },
+    { duration: '30s', target: 3000 },
+    { duration: '30s', target: 4000 },
+    { duration: '30s', target: 5000 },
+    { duration: '1m', target: 500 },
   ],
 }
 
@@ -25,7 +31,7 @@ export default function () {
 
   // Post played track message
   response = http.post(
-    'http://127.0.0.1:8080/events/',
+    `${BASE_URL}/events/`,
     JSON.stringify(event),
     { headers: { 'Content-Type': 'application/json' } }
   )

@@ -56,6 +56,8 @@ docker compose run --rm k6
 
 ### Локально (без Docker)
 
+**proxy**
+ 
 ```bash
 # Запуск с параметрами по умолчанию (127.0.0.1:8080) или из config.yaml, если файл есть
 python3 -m proxy.main
@@ -68,9 +70,45 @@ python3 -m proxy.main /path/to/config.yaml
 CONFIG_PATH=/path/to/config.yaml python3 -m proxy.main
 ```
 
-При отсутствии `config.yaml` (и `CONFIG_PATH`) параметры берутся из переменных окружения. Для round-robin поднимите два upstream вручную (см. раздел «Тестирование»).
+При отсутствии `config.yaml` (и `CONFIG_PATH`) параметры берутся из переменных окружения.
+Для round-robin поднимите два upstream вручную (см. раздел «Тестирование»).
 
-Для нагрузочных тестов с целевым RPS 1000 и выше может потребоваться поднять лимит открытых файлов: `ulimit -n 8192` перед запуском прокси. Подробнее см. [load_scenarios.md](tests/load_scenarios.md) (раздел про ulimit).
+**Горячая перезагрузка (SIGHUP):** после изменения конфига отправьте процессу сигнал SIGHUP — конфиг будет перечитан без остановки сервера. Новые соединения используют обновлённые параметры.
+
+Local
+```bash
+kill -HUP $(pgrep -f "proxy.main")
+```
+
+Docker
+```bash
+   docker compose kill -s HUP proxy
+```
+
+**Upstreams**
+
+```bash
+uvicorn tests.echo_app:app --host 127.0.0.1 --port 9001 --workers 1 --reload
+uvicorn tests.echo_app:app --host 127.0.0.1 --port 9002 --workers 1 --reload
+```
+
+Для большой нагрузки от 5к RPS и для продакшена используем Gunicorn для управлением процессами uvicorn
+
+```bash
+gunicorn -k uvicorn.workers.UvicornWorker -w 2 tests.echo_app:app --bind 127.0.0.1:9001
+gunicorn -k uvicorn.workers.UvicornWorker -w 2 tests.echo_app:app --bind 127.0.0.1:9002
+```
+
+или если локально можно упрощенно только на uvicorn
+
+```bash
+uvicorn tests.echo_app:app --host 127.0.0.1 --port 9001 --workers 2 --loop uvloop
+uvicorn tests.echo_app:app --host 127.0.0.1 --port 9002 --workers 2 --loop uvloop
+```
+
+Для нагрузочных тестов с целевым RPS 5000 и выше может потребоваться поднять лимит открытых файлов: `ulimit -n 65535` перед запуском прокси. 
+
+Подробнее см. [load_scenarios.md](tests/load_scenarios.md) (раздел про ulimit).
 
 ## Тестирование
 

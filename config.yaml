@@ -10,7 +10,6 @@ upstreams:
   - host: "127.0.0.1"
     port: 9002
 
-
 timeouts:
   connect_ms: 1000
   read_ms: 5000
@@ -29,8 +28,8 @@ logging:
 # max_size — общий лимит пула aiohttp; должен быть >= число_апстримов × max_connections_per_host.
 # Для 1000 RPS: ~1000 соединений на хост × 2 апстрима = 2000; ставим с запасом.
 connection_pool:
-  max_size: 2200
-  max_connections_per_host: 1000
+  max_size: 2500
+  max_connections_per_host: 2000
   idle_timeout: 15.0
   connect_timeout: 5.0
   read_timeout: 30.0

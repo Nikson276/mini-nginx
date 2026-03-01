@@ -589,12 +589,7 @@ ERRO[0070] thresholds on metrics 'http_reqs' have been crossed
 
 #### 5000 RPS
 
-Ключевые показатели:
-
-- RPS:
-- P95:
-- Максимальное время:
-- connection pull использовался 
+Upstream запущены два порта по 1 воркеру uvicorn
 
 config.yaml
 ```yaml
@@ -612,8 +607,8 @@ logging:
   level: "info"
 
 connection_pool:
-  max_size: 2200
-  max_connections_per_host: 1000
+  max_size: 2500
+  max_connections_per_host: 2000
   idle_timeout: 15.0
   connect_timeout: 5.0
   read_timeout: 30.0
@@ -627,11 +622,11 @@ circuit_breaker:
   timeout: 12.0
 ```
 
+Отчет
+
 ```bash
-WARN[0112] Request Failed                                error="request timeout"
-WARN[0118] Request Failed                                error="Post \"http://127.0.0.1:8080/events/\": dial: i/o timeout"
-WARN[0120] Request Failed                                error="Post \"http://127.0.0.1:8080/events/\": dial tcp 127.0.0.1:8080: connect: cannot assign requested address"
-WARN[0130] Request Failed                                error="Post \"http://127.0.0.1:8080/events/\": dial: i/o timeout"
+WARN[0130] Request Failed                                error="Post \"http://127.0.0.1:8080/events/\": request timeout"
+WARN[0130] Request Failed                                error="Post \"http://127.0.0.1:8080/events/\": request timeout"
 
 
   █ THRESHOLDS 
@@ -640,59 +635,65 @@ WARN[0130] Request Failed                                error="Post \"http://12
     ✗ 'p(95)<15000' p(95)=1m0s
 
     http_req_failed
-    ✗ 'rate<0.05' rate=72.50%
+    ✗ 'rate<0.05' rate=50.02%
 
     http_reqs
-    ✗ 'rate>=4500' rate=440.811583/s
+    ✗ 'rate>=4500' rate=425.22764/s
 
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 57650  440.551761/s
-    checks_succeeded...: 27.50% 15858 out of 57650
-    checks_failed......: 72.49% 41792 out of 57650
+    checks_total.......: 55402  425.22764/s
+    checks_succeeded...: 49.97% 27688 out of 55402
+    checks_failed......: 50.02% 27714 out of 55402
 
     ✗ status 200
-      ↳  27% — ✓ 15858 / ✗ 41792
+      ↳  49% — ✓ 27688 / ✗ 27714
 
     HTTP
-    http_req_duration..............: avg=26.44s min=0s      med=17.03s max=1m1s   p(90)=1m0s  p(95)=1m0s 
-      { expected_response:true }...: avg=5.2s   min=46.15ms med=6.34s  max=12.18s p(90)=8.94s p(95)=9.67s
-    http_req_failed................: 72.50% 41826 out of 57684
-    http_reqs......................: 57684  440.811583/s
+    http_req_duration..............: avg=28s    min=0s       med=13.18s max=1m1s   p(90)=1m0s  p(95)=1m0s  
+      { expected_response:true }...: avg=10.59s min=217ms    med=6.47s  max=56.53s p(90)=27s   p(95)=50.18s
+    http_req_failed................: 50.02% 27714 out of 55402
+    http_reqs......................: 55402  425.22764/s
 
     EXECUTION
-    dropped_iterations.............: 527193 4028.72167/s
-    iteration_duration.............: avg=27.86s min=4.2ms   med=23.38s max=1m9s   p(90)=1m0s  p(95)=1m3s 
-    iterations.....................: 57684  440.811583/s
-    vus............................: 10988  min=949            max=20000
-    vus_max........................: 20000  min=950            max=20000
+    dropped_iterations.............: 537431 4124.950651/s
+    iteration_duration.............: avg=32.66s min=111.81ms med=18.36s max=1m30s  p(90)=1m16s p(95)=1m23s 
+    iterations.....................: 55402  425.22764/s
+    vus............................: 5751   min=1044           max=20000
+    vus_max........................: 20000  min=1079           max=20000
 
     NETWORK
-    data_received..................: 11 MB  87 kB/s
-    data_sent......................: 13 MB  97 kB/s
+    data_received..................: 15 MB  112 kB/s
+    data_sent......................: 11 MB  84 kB/s
 
 
 
 
-running (2m10.9s), 00000/20000 VUs, 57618 complete and 10972 interrupted iterations
-constant_rate ✓ [======================================] 10972/20000 VUs  2m0s  5000.00 iters/s
-ERRO[0131] thresholds on metrics 'http_req_duration, http_req_failed, http_reqs' have been crossed 
-
+running (2m10.3s), 00000/20000 VUs, 55397 complete and 5729 interrupted iterations
+constant_rate ✓ [======================================] 05729/20000 VUs  2m0s  5000.00 iters/s
+ERRO[0130] thresholds on metrics 'http_req_duration, http_req_failed, http_reqs' have been crossed 
 ```
 
-Ошибка прокси
+Ошибки Proxy
 
 ```bash
-OSError: [Errno 24] Too many open files
-socket.accept() out of system resource
-socket: <asyncio.TransportSocket fd=17, family=2, type=1, proto=6, laddr=('0.0.0.0', 8080)>
 Traceback (most recent call last):
-  File "/usr/lib/python3.12/asyncio/selector_events.py", line 178, in _accept_connection
-  File "/usr/lib/python3.12/socket.py", line 295, in accept
-    fd, addr = self._accept()
-               ^^^^^^^^^^^^^^
-OSError: [Errno 24] Too many open files
+  File "/home/nikson/Dev/CursorProjects/mini-nginx/proxy/client_handler.py", line 156, in _proxy_to_upstream_internal
+    return await self._proxy_with_aiohttp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nikson/Dev/CursorProjects/mini-nginx/proxy/client_handler.py", line 490, in _proxy_with_aiohttp
+    raise ClientDisconnectError("Client disconnected") from e
+proxy.circuit_breaker.ClientDisconnectError: Client disconnected
+2026-03-01 18:33:16,635 - proxy - ERROR - Error proxying via connection pool to 127.0.0.1:9001: Client disconnected trace_id=e0a9c072-a2aa-43a2-9f11-2ef63840a0b4
+Traceback (most recent call last):
+  File "/home/nikson/Dev/CursorProjects/mini-nginx/proxy/client_handler.py", line 486, in _proxy_with_aiohttp
+    await self.writer.drain()
+  File "/usr/lib/python3.12/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/usr/lib/python3.12/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
 ```
 
 

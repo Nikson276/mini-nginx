@@ -404,3 +404,5 @@ Docker
 ```
 
 ## [Test log and issuess](./tests/test_log_fix.md)
+
+## [Load test hystory and analyze](./info/load_test_k6_analyze.md)

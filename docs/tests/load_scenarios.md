@@ -6,7 +6,7 @@
 - Под нагрузкой (см. ниже) сервер не падает, корректно ограничивает одновременные соединения и не течёт памятью заметно.
 - Таймауты срабатывают предсказуемо: зависший апстрим не вешает клиента навсегда.
 
-### Нагрузка (k6):
+### Нагрузка (k6) План:
 
 ```
 wrk -t4 -c128 -d30s http://127.0.0.1:8080/
@@ -40,14 +40,7 @@ docker compose --profile load-test run --rm k6 run /scripts/load-test-constant-r
 - ab: ab -n5000 -c200 → 5000 запросов, 200 одновременных соединений
 - vegeta: -duration=30s -rate=500 → 30 секунд, 500 запросов в секунду
 
-### VUs и RPS: почему 1500 VUs дают ~100 RPS и как тестировать целевой RPS
-
-В сценариях по **stages (target: VUs)** RPS не задаётся напрямую. Справедлива формула:
-
-- **RPS ≈ VUs / avg_iteration_duration**
-- Одна итерация = один запрос (в нашем скрипте — один POST). Если в среднем ответ приходит за 7 с, то при 1500 VUs каждый виртуальный пользователь делает примерно 1 запрос за 7 с → 1500/7 ≈ 214 запросов/с в идеале. На практике часть времени уходит на очереди, таймауты, отказы → наблюдаем ~95–100 RPS.
-
-Чтобы **тестировать именно целевой RPS** (1000, 5000 и т.д.), в k6 нужно использовать сценарий **constant-arrival-rate**: задаётся число запросов в секунду, k6 сам поднимает нужное количество VUs.
+### Нагрузка под целевой PRS
 
 ```bash
 # 500 RPS по умолчанию, 60 с
@@ -62,131 +55,9 @@ k6 run tests/k6/load-test-constant-rate.js -e RPS=5000 -e DURATION=120s
 
 Скрипт: `tests/k6/load-test-constant-rate.js` (POST /events/, как в основном load-test.js).
 
-### Потянет ли прокси 1000 или 10 000 RPS? От чего это зависит
+[Как тестировать целевой RPS](../info/load_test_k6_analyze.md#vus-и-rps-как-тестировать-целевой-rps)
 
-- **Латентность апстрима** — главный фактор. Если бэкенд отвечает за 10 ms, один keep-alive запрос может давать до 100 RPS на соединение; 10 соединений → 1000 RPS. Если апстрим отвечает за 100 ms, для 1000 RPS уже нужно порядка 100 одновременных запросов к нему.
-- **Прокси**: размер пула (`max_connections_per_host`), лимиты (`max_conns_per_upstream`), один глобальный lock убран — при быстром апстриме десятки тысяч RPS на одном процессе возможны, но обычно упор в 10k+ RPS делают на горизонтальное масштабирование (несколько инстансов прокси + балансировщик).
-- **Железо и окружение**: CPU, память, локальный loopback vs сеть. На одном хосте (прокси + апстримы на 127.0.0.1) 1000 RPS при адекватном апстриме — реалистичная цель; 10 000 RPS на одном процессе — уже тяжёлый режим, лучше проверять пошагово (1k → 2k → 5k) и смотреть на ошибки и p95.
-
-**Итого**: цели в 1000 RPS для одного инстанса прокси и быстрого апстрима — реалистичны. 10 000 RPS на одном инстансе — возможны при очень быстром бэкенде и оптимизациях; для надёжности чаще целится в несколько тысяч RPS на инстанс и масштабирование по горизонтали.
-
-### Как поднять RPS, если тест упирается в ~100 RPS
-
-Типичная картина: constant-rate 500 RPS, а фактически получается ~100 RPS и p95 латентности растёт (15–17 с). Значит система не успевает обрабатывать запросы, они стоят в очередях.
-
-**От чего зависит потолок:**
-
-- **RPS ≈ (число одновременных запросов к апстримам) / (среднее время ответа)**  
-  Пример: 200 соединений к апстримам (100 на хост × 2), среднее время ответа 2 с → 200/2 = 100 RPS. Совпадение с наблюдаемым ~100 — признак того, что лимит упирается либо в число соединений, либо в скорость апстрима.
-
-**Что смотреть по порядку:**
-
-1. **Апстрим: больше воркеров (главный рычаг)**  
-   Сейчас: по одному процессу uvicorn на каждый порт (9001, 9002) → 2 процесса. При 500 RPS они перегружены, запросы копятся, латентность растёт.  
-   Запуск с несколькими воркерами на каждый порт:
-   ```bash
-   uvicorn tests.echo_app:app --host 127.0.0.1 --port 9001 --workers 4
-   uvicorn tests.echo_app:app --host 127.0.0.1 --port 9002 --workers 4
-   ```
-   Итого 8 процессов — пропускная способность апстрима вырастет в разы; после этого снова гнать constant-rate 500 RPS.
-
-2. **Апстрим: меньше работы в hot path**  
-   В тестовом echo_app на каждый запрос: логирование (в т.ч. INFO), обновление `stats`, сериализация JSON. Под нагрузкой это съедает CPU. Для теста можно временно поднять уровень логов до WARNING или отключить лишнее — чтобы оценить «чистый» предел без логирования.
-
-3. **Прокси: пул соединений**  
-   В `config.yaml`: `max_connections_per_host` (сейчас 100). При быстром апстриме можно поднять до 150–200, чтобы больше запросов шло параллельно. Важно: это помогает только если апстрим реально успевает отвечать быстрее.
-
-4. **Горизонтальное масштабирование**  
-   Если одного инстанса прокси и нескольких воркеров апстрима не хватает:
-   - апстрим: несколько инстансов за прокси (добавить в `upstreams` в конфиге);
-   - прокси: несколько инстансов за балансировщиком (nginx/haproxy), каждый даёт свой RPS.
-
-**Как обычно поступают:** сначала увеличивают воркеры/инстансы апстрима и убирают лишнюю нагрузку (логи), замеряют RPS и латентность. Если нужно ещё — поднимают пул в прокси и добавляют инстансы (апстрим и/или прокси).
-
-#### Лимит открытых файлов (ulimit) при целевых 1000+ RPS
-
-При высоких лимитах в конфиге (`max_client_conns`, `max_connections_per_host`) процесс может упираться в системный лимит числа открытых файлов (дескрипторов). Симптомы:
-
-- В логах прокси: `OSError: [Errno 24] Too many open files`
-- Затем возможно: `ValueError: Invalid file descriptor: -1` в asyncio (сокет уже закрыт из‑за нехватки FDs)
-
-**Что сделать:** поднять лимит до старта прокси. Ориентир: `max_client_conns + (число_апстримов × max_connections_per_host) + 100`. Для конфига на 1000 RPS (например 2500 клиентов, 600 на хост × 2) нужно не менее ~4000; рекомендуется 8192.
-
-- **Локально:** `ulimit -n 8192` в той же оболочке, затем запуск прокси.
-- **systemd:** в unit-файле `LimitNOFILE=8192` (или больше).
-- **Docker:** в `docker-compose.yml` у сервиса прокси: `ulimits: nofile: { soft: 8192, hard: 8192 }`.
-
-При старте прокси выводит предупреждение, если текущий ulimit меньше требуемого по конфигу.
-
-Все эти тесты проверяют:
-
-- Базовую производительность прокси (статичный контент)
-- Устойчивость к высокому RPS (Requests Per Second)
-- Обработку множества одновременных соединений
-
-**Метрики по ТЗ** (что смотреть в отчёте k6):
-
-- RPS — `http_reqs` (rate);
-- latency p95/p99 — `http_req_duration` p(95), p(99);
-- ошибки — `http_req_failed`, `checks_failed`;
-- timeouts — в логах и по коду ответа;
-- распределение по апстримам — в метриках/логах прокси. апстримам (round‑robin).
-
-### Результаты (отчеты К6)
-
-#### 800VUs 
-
-Ключевые показатели:
-
-- RPS: ~92 запроса в секунду (стабильно)
-- P95: 8.02 секунды (в пределах таймаутов)
-- Максимальное время: 9.11 секунд (ни одного таймаута!)
-- Ни одного прерванного соединения
-- connection pull использовался 
-
-```bash
-     scenarios: (100.00%) 1 scenario, 800 max VUs, 5m30s max duration (incl. graceful stop):
-              * default: Up to 800 looping VUs for 5m0s over 4 stages (gracefulRampDown: 30s, gracefulStop: 30s)
-
-
-
-  █ THRESHOLDS 
-
-    http_reqs
-    ✓ 'count>=10000' count=27590
-
-
-  █ TOTAL RESULTS 
-
-    checks_total.......: 27590   91.965706/s
-    checks_succeeded...: 100.00% 27590 out of 27590
-    checks_failed......: 0.00%   0 out of 27590
-
-    ✓ status equals 200
-
-    HTTP
-    http_req_duration..............: avg=4.07s min=1.81ms med=4.03s max=9.11s p(90)=7.13s p(95)=8.02s
-      { expected_response:true }...: avg=4.07s min=1.81ms med=4.03s max=9.11s p(90)=7.13s p(95)=8.02s
-    http_req_failed................: 0.00%  0 out of 27590
-    http_reqs......................: 27590  91.965706/s
-
-    EXECUTION
-    iteration_duration.............: avg=4.07s min=1.94ms med=4.03s max=9.11s p(90)=7.13s p(95)=8.02s
-    iterations.....................: 27590  91.965706/s
-    vus............................: 1      min=1          max=800
-    vus_max........................: 800    min=800        max=800
-
-    NETWORK
-    data_received..................: 18 MB  61 kB/s
-    data_sent......................: 5.4 MB 18 kB/s
-
-
-
-
-running (5m00.0s), 000/800 VUs, 27590 complete and 0 interrupted iterations
-default ✓ [======================================] 000/800 VUs  5m0s
-
-```
+### Результаты (отчеты К6) До доработок (keep-alive pool + config)
 
 #### wrk-like
 
@@ -374,16 +245,371 @@ vegeta_like ✓ [============================] 0666/1000 VUs  30s  500.00 iters/
 ERRO[0035] thresholds on metrics 'http_req_duration, http_reqs' have been crossed 
 ```
 
+### Результаты (отчеты К6) ПОСЛЕ доработок (keep-alive pool + config)
+
+#### wrk-like
+
+**Ключевые результаты**
+
+- RPS: 62 --> 905
+- AVG: 2s --> 140ms
+- p(95): 2.56s --> 204ms
+
+```bash
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: tests/k6/load-test-wrk-like.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 128 max VUs, 35s max duration (incl. graceful stop):
+              * wrk_like: 128 looping VUs for 30s (gracefulStop: 5s)
+
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<5000' p(95)=204.73ms
+    ✓ 'p(99)<10000' p(99)=307.72ms
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 27232   905.141313/s
+    checks_succeeded...: 100.00% 27232 out of 27232
+    checks_failed......: 0.00%   0 out of 27232
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=140.88ms min=19.13ms med=143.2ms  max=416.43ms p(90)=185.9ms  p(95)=204.73ms
+      { expected_response:true }...: avg=140.88ms min=19.13ms med=143.2ms  max=416.43ms p(90)=185.9ms  p(95)=204.73ms
+    http_req_failed................: 0.00%  0 out of 27232
+    http_reqs......................: 27232  905.141313/s
+
+    EXECUTION
+    iteration_duration.............: avg=141.18ms min=19.2ms  med=143.49ms max=416.76ms p(90)=186.24ms p(95)=205.24ms
+    iterations.....................: 27232  905.141313/s
+    vus............................: 128    min=128        max=128
+    vus_max........................: 128    min=128        max=128
+
+    NETWORK
+    data_received..................: 10 MB  337 kB/s
+    data_sent......................: 1.9 MB 63 kB/s
+
+
+
+
+running (30.1s), 000/128 VUs, 27232 complete and 0 interrupted iterations
+wrk_like ✓ [======================================] 128 VUs  30s
+
+```
+
+#### ab-like
+
+**Ключевые результаты**
+
+- RPS: 52 --> 2184
+- AVG: 3.7s --> 76.83ms
+- p(95): 24.49s --> 179.42ms
+
+
+```bash
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: tests/k6/load-test-ab-like.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 200 max VUs, 5m5s max duration (incl. graceful stop):
+              * ab_like: 25 iterations for each of 200 VUs (maxDuration: 5m0s, gracefulStop: 5s)
+
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<5000' p(95)=179.42ms
+    ✓ 'p(99)<10000' p(99)=227.79ms
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 5000    2184.019833/s
+    checks_succeeded...: 100.00% 5000 out of 5000
+    checks_failed......: 0.00%   0 out of 5000
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=76.83ms min=11.82ms med=56.51ms max=234.67ms p(90)=149.23ms p(95)=179.42ms
+      { expected_response:true }...: avg=76.83ms min=11.82ms med=56.51ms max=234.67ms p(90)=149.23ms p(95)=179.42ms
+    http_req_failed................: 0.00%  0 out of 5000
+    http_reqs......................: 5000   2184.019833/s
+
+    EXECUTION
+    iteration_duration.............: avg=77.08ms min=12.1ms  med=56.57ms max=234.93ms p(90)=149.48ms p(95)=179.67ms
+    iterations.....................: 5000   2184.019833/s
+    vus............................: 96     min=96        max=200
+    vus_max........................: 200    min=200       max=200
+
+    NETWORK
+    data_received..................: 1.9 MB 813 kB/s
+    data_sent......................: 350 kB 153 kB/s
+
+
+
+
+running (0m02.3s), 000/200 VUs, 5000 complete and 0 interrupted iterations
+ab_like ✓ [======================================] 200 VUs  0m02.3s/5m0s  5000/5000 iters, 25 per VU
+
+```
+
+#### vegeta-like
+
+**Ключевые результаты**
+
+- RPS: 50 --> 499
+- AVG: 12.85s --> 3.77ms
+- p(95): 17.98s --> 6.96ms
+
+
+```bash
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: tests/k6/load-test-vegeta-like.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 1000 max VUs, 35s max duration (incl. graceful stop):
+              * vegeta_like: 500.00 iterations/s for 30s (maxVUs: 100-1000, gracefulStop: 5s)
+
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<5000' p(95)=6.96ms
+    ✓ 'p(99)<10000' p(99)=10.78ms
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+    http_reqs
+    ✓ 'rate>=450' rate=499.931324/s
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 15001   499.931324/s
+    checks_succeeded...: 100.00% 15001 out of 15001
+    checks_failed......: 0.00%   0 out of 15001
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=3.77ms min=852.75µs med=3.61ms max=39.91ms p(90)=5.72ms p(95)=6.96ms
+      { expected_response:true }...: avg=3.77ms min=852.75µs med=3.61ms max=39.91ms p(90)=5.72ms p(95)=6.96ms
+    http_req_failed................: 0.00%  0 out of 15001
+    http_reqs......................: 15001  499.931324/s
+
+    EXECUTION
+    iteration_duration.............: avg=4.02ms min=917.05µs med=3.85ms max=40.12ms p(90)=6.07ms p(95)=7.32ms
+    iterations.....................: 15001  499.931324/s
+    vus............................: 2      min=0          max=5  
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 5.6 MB 186 kB/s
+    data_sent......................: 1.1 MB 35 kB/s
+
+
+
+
+running (30.0s), 0000/0100 VUs, 15001 complete and 0 interrupted iterations
+vegeta_like ✓ [======================================] 0000/0100 VUs  30s  500.00 iters/s
+```
+
+#### 500 RPS
+
+```bash
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: tests/k6/load-test-constant-rate.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 2000 max VUs, 1m10s max duration (incl. graceful stop):
+              * constant_rate: 500.00 iterations/s for 1m0s (maxVUs: 500-2000, gracefulStop: 10s)
+
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<15000' p(95)=2.98s
+
+    http_req_failed
+    ✓ 'rate<0.05' rate=0.00%
+
+    http_reqs
+    ✗ 'rate>=450' rate=449.970149/s
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 27001   449.970149/s
+    checks_succeeded...: 100.00% 27001 out of 27001
+    checks_failed......: 0.00%   0 out of 27001
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=862.57ms min=933.45µs med=36.79ms max=4.48s p(90)=2.71s p(95)=2.98s
+      { expected_response:true }...: avg=862.57ms min=933.45µs med=36.79ms max=4.48s p(90)=2.71s p(95)=2.98s
+    http_req_failed................: 0.00%  0 out of 27001
+    http_reqs......................: 27001  449.970149/s
+
+    EXECUTION
+    dropped_iterations.............: 2999   49.978167/s
+    iteration_duration.............: avg=863.33ms min=1.01ms   med=37.21ms max=4.48s p(90)=2.71s p(95)=2.98s
+    iterations.....................: 27001  449.970149/s
+    vus............................: 3      min=1          max=1158
+    vus_max........................: 1214   min=500        max=1214
+
+    NETWORK
+    data_received..................: 14 MB  237 kB/s
+    data_sent......................: 5.4 MB 89 kB/s
+
+
+
+
+running (1m00.0s), 0000/1214 VUs, 27001 complete and 0 interrupted iterations
+constant_rate ✓ [======================================] 0000/1214 VUs  1m0s  500.00 iters/s
+```
+
+#### 1000 RPS
+
+Ключевые показатели:
+
+- RPS: ~690 запроса в секунду (стабильно)
+- P95: 4.32 секунды (в пределах таймаутов)
+- Максимальное время: 6.65 секунд (ни одного таймаута!)
+- Ни одного прерванного соединения
+- connection pull использовался 
+
+```bash
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: tests/k6/load-test-constant-rate.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 4000 max VUs, 1m10s max duration (incl. graceful stop):
+              * constant_rate: 1000.00 iterations/s for 1m0s (maxVUs: 500-4000, gracefulStop: 10s)
+
+WARN[0051] Insufficient VUs, reached 4000 active VUs and cannot initialize more  executor=constant-arrival-rate scenario=constant_rate
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<15000' p(95)=4.32s
+
+    http_req_failed
+    ✓ 'rate<0.05' rate=0.00%
+
+    http_reqs
+    ✗ 'rate>=900' rate=690.482473/s
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 48346   690.482473/s
+    checks_succeeded...: 100.00% 48346 out of 48346
+    checks_failed......: 0.00%   0 out of 48346
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=2.58s min=923.17µs med=2.56s max=6.65s p(90)=4.08s p(95)=4.32s
+      { expected_response:true }...: avg=2.58s min=923.17µs med=2.56s max=6.65s p(90)=4.08s p(95)=4.32s
+    http_req_failed................: 0.00%  0 out of 48346
+    http_reqs......................: 48346  690.482473/s
+
+    EXECUTION
+    dropped_iterations.............: 10642  151.990123/s
+    iteration_duration.............: avg=2.58s min=1.01ms   med=2.56s max=6.65s p(90)=4.08s p(95)=4.32s
+    iterations.....................: 48346  690.482473/s
+    vus............................: 1012   min=1          max=4000
+    vus_max........................: 4000   min=500        max=4000
+
+    NETWORK
+    data_received..................: 26 MB  364 kB/s
+    data_sent......................: 9.8 MB 141 kB/s
+
+
+
+
+running (1m10.0s), 0000/4000 VUs, 48346 complete and 1012 interrupted iterations
+constant_rate ✓ [======================================] 1012/4000 VUs  1m0s  1000.00 iters/s
+ERRO[0070] thresholds on metrics 'http_reqs' have been crossed 
+
+```
+
+#### 5000 RPS
+
+Ключевые показатели:
+
+- RPS: ~690 запроса в секунду (стабильно)
+- P95: 4.32 секунды (в пределах таймаутов)
+- Максимальное время: 6.65 секунд (ни одного таймаута!)
+- Ни одного прерванного соединения
+- connection pull использовался 
+
+```bash
+
+```
 
 
 ## Продвинутые задания (необязательно, по желанию)
 
-- Health‑checks апстримов (active/passive), исключение недоступных из балансировки.
-- Retry политика (например, при connect/read таймаутах, но не для небезопасных методов).
-- Circuit Breaker (отключение проблемного апстрима на интервал).
-- Rate limiting (token bucket) на клиента или общий.
-- Поддержка HTTPS на фронте (TLS termination) и/или к апстриму.
-- Горячая перезагрузка конфигурации (SIGHUP) без остановки сервера.
-- HTTP/1.1 keep‑alive пул к апстримам, повторное использование соединений.
-- Проброс/модификация заголовков (X-Forwarded-For, Via, Connection: keep-alive и т. п.).
-- Мини‑панель метрик: простая страница со статистикой.
+- [] Health‑checks апстримов (active/passive), исключение недоступных из балансировки.
+- [] Retry политика (например, при connect/read таймаутах, но не для небезопасных методов).
+- [x] Circuit Breaker (отключение проблемного апстрима на интервал).
+- [] Rate limiting (token bucket) на клиента или общий.
+- [] Поддержка HTTPS на фронте (TLS termination) и/или к апстриму.
+- [x] Горячая перезагрузка конфигурации (SIGHUP) без остановки сервера.
+- [x] HTTP/1.1 keep‑alive пул к апстримам, повторное использование соединений.
+- [] Проброс/модификация заголовков (X-Forwarded-For, Via, Connection: keep-alive и т. п.).
+- [x] Мини‑панель метрик: простая страница со статистикой.

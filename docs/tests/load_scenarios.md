@@ -19,7 +19,7 @@ vegeta attack -duration=30s -rate=500 | vegeta report
 ```bash
 k6 run tests/k6/load-test.js    # 500-5000 VU постепенная нагрузка
 k6 run tests/k6/load-test-wrk-like.js   # 128 VU, 30 с
-k6 run tests/k6/load-test-ab-like.js    # 5000 запросов, 200 одновременных
+k6 run tests/k6/load-test-ab-like.js    # 10000 запросов, 200 одновременных
 k6 run tests/k6/load-test-vegeta-like.js # 500 RPS, 30 с
 k6 run tests/k6/load-test-constant-rate.js -e RPS=1000   # целевой RPS (500 по умолчанию)
 ```

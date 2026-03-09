@@ -9,8 +9,8 @@ export const options = {
   scenarios: {
     ab_like: {
       executor: 'per-vu-iterations',
-      vus: 200,
-      iterations: 25, // 200 × 25 = 5000 запросов всего
+      vus: 1000,
+      iterations: 50, // 200 × 25 = 5000 запросов всего
       maxDuration: '5m',
       gracefulStop: '5s',
     },

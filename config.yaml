@@ -23,7 +23,7 @@ limits:
   max_conns_per_upstream: 1000
 
 logging:
-  level: "warning"
+  level: "info"
 
 # max_size — общий лимит пула aiohttp; должен быть >= число_апстримов × max_connections_per_host.
 # Для 1000 RPS: ~1000 соединений на хост × 2 апстрима = 2000; ставим с запасом.

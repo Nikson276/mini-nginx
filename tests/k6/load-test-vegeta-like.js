@@ -9,11 +9,11 @@ export const options = {
   scenarios: {
     vegeta_like: {
       executor: 'constant-arrival-rate',
-      rate: 500,
+      rate: 1000,
       timeUnit: '1s',
       duration: '30s',
       preAllocatedVUs: 100,
-      maxVUs: 1000,
+      maxVUs: 5000,
       gracefulStop: '5s',
     },
   },

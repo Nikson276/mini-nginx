@@ -211,68 +211,69 @@ wrk_like ✓ [======================================] 128 VUs  30s
 
 **Ключевые результаты**
 
-- RPS: 52 --> 2184
-- AVG: 3.7s --> 76.83ms
-- p(95): 24.49s --> 179.42ms
+- RPS: 
+- AVG: 
+- p(95): 
 
 
 ```bash
-
-         /\      Grafana   /‾‾/  
-    /\  /  \     |\  __   /  /   
-   /  \/    \    | |/ /  /   ‾‾\ 
-  /          \   |   (  |  (‾)  |
- / __________ \  |_|\_\  \_____/ 
-
      execution: local
         script: tests/k6/load-test-ab-like.js
         output: -
 
-     scenarios: (100.00%) 1 scenario, 200 max VUs, 5m5s max duration (incl. graceful stop):
-              * ab_like: 25 iterations for each of 200 VUs (maxDuration: 5m0s, gracefulStop: 5s)
+     scenarios: (100.00%) 1 scenario, 1000 max VUs, 5m5s max duration (incl. graceful stop):
+              * ab_like: 50 iterations for each of 1000 VUs (maxDuration: 5m0s, gracefulStop: 5s)
 
+WARN[0010] Request Failed                                error="Get \"http://127.0.0.1:8080/\": EOF"
+WARN[0010] Request Failed                                error="Get \"http://127.0.0.1:8080/\": EOF"
+...
+WARN[0095] Request Failed                                error="Get \"http://127.0.0.1:8080/\": EOF"
+WARN[0101] Request Failed                                error="Get \"http://127.0.0.1:8080/\": EOF"
+WARN[0101] Request Failed                                error="Get \"http://127.0.0.1:8080/\": EOF"
+WARN[0102] Request Failed                                error="Get \"http://127.0.0.1:8080/\": EOF"
 
 
   █ THRESHOLDS 
 
     http_req_duration
-    ✓ 'p(95)<5000' p(95)=179.42ms
-    ✓ 'p(99)<10000' p(99)=227.79ms
+    ✗ 'p(95)<5000' p(95)=11.18s
+    ✗ 'p(99)<10000' p(99)=15.29s
 
     http_req_failed
-    ✓ 'rate<0.01' rate=0.00%
+    ✗ 'rate<0.01' rate=1.86%
 
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 5000    2184.019833/s
-    checks_succeeded...: 100.00% 5000 out of 5000
-    checks_failed......: 0.00%   0 out of 5000
+    checks_total.......: 50000  482.249837/s
+    checks_succeeded...: 98.13% 49067 out of 50000
+    checks_failed......: 1.86%  933 out of 50000
 
-    ✓ status 200
+    ✗ status 200
+      ↳  98% — ✓ 49067 / ✗ 933
 
     HTTP
-    http_req_duration..............: avg=76.83ms min=11.82ms med=56.51ms max=234.67ms p(90)=149.23ms p(95)=179.42ms
-      { expected_response:true }...: avg=76.83ms min=11.82ms med=56.51ms max=234.67ms p(90)=149.23ms p(95)=179.42ms
-    http_req_failed................: 0.00%  0 out of 5000
-    http_reqs......................: 5000   2184.019833/s
+    http_req_duration..............: avg=1.71s min=5.22ms med=734.69ms max=27.07s p(90)=2.35s p(95)=11.18s
+      { expected_response:true }...: avg=1.44s min=5.22ms med=719.86ms max=22.49s p(90)=1.96s p(95)=10.56s
+    http_req_failed................: 1.86%  933 out of 50000
+    http_reqs......................: 50000  482.249837/s
 
     EXECUTION
-    iteration_duration.............: avg=77.08ms min=12.1ms  med=56.57ms max=234.93ms p(90)=149.48ms p(95)=179.67ms
-    iterations.....................: 5000   2184.019833/s
-    vus............................: 96     min=96        max=200
-    vus_max........................: 200    min=200       max=200
+    iteration_duration.............: avg=1.71s min=5.51ms med=735.95ms max=27.07s p(90)=2.35s p(95)=11.22s
+    iterations.....................: 50000  482.249837/s
+    vus............................: 27     min=27           max=1000
+    vus_max........................: 1000   min=1000         max=1000
 
     NETWORK
-    data_received..................: 1.9 MB 813 kB/s
-    data_sent......................: 350 kB 153 kB/s
+    data_received..................: 18 MB  176 kB/s
+    data_sent......................: 3.7 MB 36 kB/s
 
 
 
 
-running (0m02.3s), 000/200 VUs, 5000 complete and 0 interrupted iterations
-ab_like ✓ [======================================] 200 VUs  0m02.3s/5m0s  5000/5000 iters, 25 per VU
-
+running (1m43.7s), 0000/1000 VUs, 50000 complete and 0 interrupted iterations
+ab_like ✓ [======================================] 1000 VUs  1m43.7s/5m0s  50000/50000 iters, 50 per VU
+ERRO[0104] thresholds on metrics 'http_req_duration, http_req_failed' have been crossed 
 ```
 
 #### vegeta-like

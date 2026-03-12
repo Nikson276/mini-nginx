@@ -413,3 +413,17 @@ Docker
 ## [Test log and issuess](./tests/test_log_fix.md)
 
 ## [Load test hystory and analyze](./info/load_test_k6_analyze.md)
+
+### Multiprocess proxy
+
+- **Зачем**: один процесс asyncio упирается в одно CPU‑ядро; для целей 1000+ RPS разумно масштабироваться по процессам.
+- **Как**: благодаря `reuse_port=True` на основном сокете и сокете метрик можно запустить несколько процессов `python -m proxy.main` с одинаковым `listen`.
+- **Пример**:
+
+```bash
+CONFIG_PATH=./config.yaml PYROSCOPE_APPLICATION_NAME=proxy-multi python -m proxy.main &
+CONFIG_PATH=./config.yaml PYROSCOPE_APPLICATION_NAME=proxy-multi python -m proxy.main &
+wait
+```
+
+- ядро распределяет входящие подключения по процессам, достигая суммарного RPS примерно `N × RPS_одного_процесса` (в пределах ресурсов машины).

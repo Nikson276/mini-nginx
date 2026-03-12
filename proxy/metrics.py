@@ -156,6 +156,12 @@ async def run_metrics_server(host: str, port: int) -> None:
             except Exception:
                 pass
 
-    srv = await asyncio.start_server(handler, host, port, reuse_address=True)
+    srv = await asyncio.start_server(
+        handler,
+        host,
+        port,
+        reuse_address=True,
+        reuse_port=True,
+    )
     async with srv:
         await srv.serve_forever()

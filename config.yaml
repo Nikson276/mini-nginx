@@ -11,16 +11,16 @@ upstreams:
     port: 9002
 
 timeouts:
-  connect_ms: 1000
-  read_ms: 5000
-  write_ms: 5000
-  total_ms: 10000
+  connect_ms: 1000          # чуть уменьшить с 1000
+  read_ms: 1000           # увеличить с 5000 (для длинных запросов)
+  write_ms: 2000          # оставить
+  total_ms: 3000         # увеличить до 15с для учета длинных хвостов
 
 # Для ~1000 RPS при латентности ~2 с нужно ~2000 одновременных соединений (клиент + апстрим).
 # Требуется ulimit на открытые файлы >= 5000 (см. docs или systemd LimitNOFILE).
 limits:
   max_client_conns: 2500
-  max_conns_per_upstream: 1000
+  max_conns_per_upstream: 1500
 
 logging:
   level: "info"
@@ -28,18 +28,18 @@ logging:
 # max_size — общий лимит пула aiohttp; должен быть >= число_апстримов × max_connections_per_host.
 # Для 1000 RPS: ~1000 соединений на хост × 2 апстрима = 2000; ставим с запасом.
 connection_pool:
-  max_size: 2500
-  max_connections_per_host: 1000
-  idle_timeout: 15.0
-  connect_timeout: 5.0
-  read_timeout: 30.0
+  max_size: 3000                    # увеличить общий пул
+  max_connections_per_host: 1500     # увеличить на хост
+  idle_timeout: 30.0                 # увеличить idle timeout
+  connect_timeout: 5.0               # оставить
+  read_timeout: 25.0                  # чуть уменьшить (быстрее отдавать ошибки)
 
 # Таймаут CB должен быть >= timeouts.total_ms (иначе CB режет запросы раньше общего таймаута).
 # При пиках 1200 VUs: больше пул (см. выше), в half-open — больше допускаемых сбоев и увеличенный таймаут для проб.
 circuit_breaker:
-  failure_threshold: 120
-  recovery_timeout: 15.0
-  half_open_max_requests: 20
-  half_open_max_failures: 12
-  half_open_timeout_multiplier: 2
-  timeout: 12.0
+  failure_threshold: 150              # еще больше ошибок до открытия
+  recovery_timeout: 20.0               # больше время на восстановление
+  half_open_max_requests: 30           # больше пробных запросов
+  half_open_max_failures: 8            # меньше ошибок для возврата в OPEN (чувствительнее)
+  half_open_timeout_multiplier: 2      # оставить
+  timeout: 5.0                        # увеличить до 15с (под total_ms)
